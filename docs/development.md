@@ -56,9 +56,53 @@ and one sdist version in the artifact directory for this validation.
 
 ## CI
 
-GitHub Actions runs the offline suite on Ubuntu, Windows and macOS with Python
-3.10 and 3.12. A separate job installs all optional backends and runs the suite
-without downloading models or UniDic. A distribution job builds wheel/sdist,
-checks metadata, prepares dependency wheels and exercises clean installations.
-Coverage reports and distribution archives are uploaded as workflow artifacts.
-There is no publication workflow.
+GitHub Actions runs the offline suite on Ubuntu with Python 3.10 through 3.14,
+and on Windows and macOS with Python 3.10 and 3.14. A separate Python 3.12 job
+installs all optional backends and runs the suite without downloading models or
+UniDic. A distribution job builds wheel/sdist, checks metadata, prepares dependency
+wheels and exercises clean installations. Coverage reports and distribution
+archives are uploaded as workflow artifacts.
+
+The test workflow runs for branch pushes, pull requests and manual dispatches.
+It is also reusable by the release workflow, which tests the release's tagged
+commit and publishes the resulting verified distribution artifacts.
+
+## PyPI publishing setup
+
+Publishing uses [PyPI Trusted Publishing](https://docs.pypi.org/trusted-publishers/)
+with GitHub Actions OIDC. The GitHub environment is named `pypi` and permits
+deployment from `v*` tags. No PyPI API token is stored in the repository.
+
+For a new PyPI project, sign into the account that will own the package and add
+a pending publisher at https://pypi.org/manage/account/publishing/:
+
+| Field | Value |
+| --- | --- |
+| PyPI project name | `g2pflow` |
+| GitHub owner | `openvpi` |
+| Repository name | `g2pflow` |
+| Workflow filename | `publish.yml` |
+| Environment name | `pypi` |
+
+Enter the workflow filename only, without `.github/workflows/`. The first
+successful publication creates the PyPI project and converts the pending
+publisher into a normal publisher. For an existing project, configure the same
+publisher under that project's publishing settings.
+
+## Publish a version
+
+1. Update `project.version` in `pyproject.toml`, commit and push the change.
+2. Open https://github.com/openvpi/g2pflow/releases/new and create a tag matching
+   the package version exactly, prefixed with `v`, on the intended commit.
+   The initial version is `0.1.0`, so its tag is `v0.1.0`.
+3. Publish the GitHub Release. A saved draft does not publish to PyPI.
+4. The `Publish to PyPI` workflow validates the tag, runs the complete test and
+   build workflow on that tagged commit, then uploads its wheel and sdist.
+5. Check the completed workflow and https://pypi.org/project/g2pflow/.
+
+Both published releases and published prereleases trigger this workflow; use a
+matching package version such as `0.2.0rc1` and tag `v0.2.0rc1` for prereleases.
+Uploading uses the artifacts from the successful checks in that same run and
+does not rebuild them in the publishing job. Only the publishing job has the
+OIDC permission. PyPI does not allow replacing an already uploaded file; publish
+corrections under a new version.
