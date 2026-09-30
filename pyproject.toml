@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "g2pflow"
+version = "0.1.0"
+description = "Composable multilingual grapheme-to-phoneme pipelines"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{name = "Team OpenVPI"}]
+license = "MIT AND Apache-2.0 AND CC-BY-SA-3.0 AND CC-BY-SA-4.0"
+license-files = ["LICENSE", "licenses/*.txt", "src/g2pflow/converters/cpp_pinyin/dicts/*/License.txt"]
+dependencies = ["pydantic>=2.11,<3"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+    "Topic :: Text Processing :: Linguistic",
+]
+
+[project.optional-dependencies]
+ja = ["fugashi>=1.3,<2", "unidic>=1.1,<2", "filelock"]
+lstm = ["numpy", "onnxruntime"]
+all = ["fugashi>=1.3,<2", "unidic>=1.1,<2", "filelock", "numpy", "onnxruntime"]
+dev = ["pytest", "pytest-cov", "build", "twine", "numpy"]
+
+[tool.setuptools]
+include-package-data = false
+
+[tool.setuptools.packages.find]
+where = ["src"]
+namespaces = false
+
+[tool.setuptools.package-data]
+g2pflow = ["py.typed"]
+"g2pflow.converters.cpp_pinyin" = ["dicts/*/*.txt"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+    "integration: uses explicitly supplied real dictionaries and models",
+    "distribution: checks built wheel and sdist in isolated environments",
+]
+
+[tool.coverage.run]
+source = ["g2pflow"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+include = ["src/g2pflow/*"]

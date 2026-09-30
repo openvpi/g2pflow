@@ -1,0 +1,57 @@
+name: Tests and distributions
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.10", "3.12"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install -e ".[dev]"
+      - run: python -m pytest --cov=g2pflow --cov-report=term-missing --cov-report=xml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.os }}-${{ matrix.python }}
+          path: coverage.xml
+
+  optional-backends:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -e ".[all,dev]"
+      - run: python -m pytest
+
+  distributions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -e ".[dev]"
+      - run: python -m build
+      - run: python -m twine check dist/*
+      - run: |
+          python -m pip download --only-binary=:all: --dest wheelhouse dist/*.whl "setuptools>=77.0.3" wheel
+      - run: python -m pytest --run-distribution -m distribution
+      - uses: actions/upload-artifact@v4
+        with:
+          name: distributions
+          path: dist/*
