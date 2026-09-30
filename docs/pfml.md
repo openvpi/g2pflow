@@ -31,8 +31,8 @@ word
 
 `G2PWord.text` and `G2PWord.language` correspond to the `text` and `language`
 attributes on `word`. Missing source labels are filled for
-direct results, while an omitted language inherits the surrounding scope or
-caller context. Simple automatic words can also supply their text as character
+direct results, while an omitted language inherits the surrounding scope.
+Simple automatic words can also supply their text as character
 data. [Serialization](#serialization) preserves both fields and the complete
 candidate tree of successful, normalized outputs, including the distinct `None`
 and `Language.ANY` language values.
@@ -48,16 +48,15 @@ need the complete source retain it themselves. A backend result with no readings
 or a reading with no candidate paths is a conversion failure, not a successful
 silent result. Phoneme symbols must be non-empty strings.
 
-Python conversion continues to return `list[G2PWord]`. These dataclasses already
-express the complete candidate tree; replacing them with XML nodes would add
-input-only concerns such as scopes and omitted containers to every converter.
-PFML is the external representation. `PFMLDocument` is a separate normalized
-input plan containing `PFMLText` requests and direct `G2PWord` results.
+Python conversion returns `list[G2PWord]`, whose dataclasses represent the
+complete candidate tree. PFML is the external representation. `PFMLDocument`
+is a normalized input plan containing `PFMLText` requests and direct `G2PWord`
+results, with language scopes and omitted containers resolved.
 
 ## Fragments and language scopes
 
-PFML is an XML 1.0 **fragment**, with text and elements allowed as siblings.
-There is no required root element and no `g2p` element. XML declarations,
+PFML is an XML 1.0 **fragment**, with text and elements allowed as siblings
+without an enclosing root element. XML declarations,
 document types, processing instructions and XML namespaces are not part of
 PFML 1.0. Comments are ignored and CDATA is ordinary character data. Unknown
 elements, attributes and invalid nesting are errors.
@@ -69,9 +68,10 @@ elements, attributes and invalid nesting are errors.
 `scope` sets a language scope without fixing word boundaries. It can contain
 ordinary text, nested scopes, words and direct pronunciation fragments. `word`
 may override the inherited language. Resolution follows the nearest explicit
-declaration, then the caller's `language` default. An empty `language=""`
-clears inherited language information. With no effective language, the normal
-pipeline routing policy and optional `languages` filter apply.
+declaration; use an outer `scope` to set the default language for the fragment.
+An empty `language=""` clears inherited language information. With no effective
+language, the normal pipeline routing policy and optional `languages` filter
+apply.
 
 ```xml
 <scope language="zh">我住在<word>重庆</word>，喜欢<scope language="en">New York</scope>。</scope>
@@ -86,10 +86,12 @@ ID. Language-neutral and `Language.ANY` converters must
 be explicitly bound to a language in configuration to participate in a scope.
 Unsupported language scopes fail instead of falling through to another language.
 
-The pipeline's `languages` argument remains a filter for **unscoped** automatic
-text. An explicit PFML scope or caller `language` default determines its own
-language and takes precedence over that filter. Direct results need no converter
-for their declared language.
+The pipeline's `languages` argument filters automatic text with **no effective
+language declaration**, including text whose inherited language was cleared.
+An explicit PFML language declaration takes precedence over that filter;
+`languages` is not a whitelist for the whole document. Direct results need no
+converter for their declared language, and the filter does not change their
+language metadata.
 
 Literal `<` and `&` must be escaped as `&lt;` and `&amp;`, or placed in CDATA.
 `pipeline.convert()` remains a plain-text entry point, so existing text with XML
@@ -99,7 +101,7 @@ parses PFML, including text-only fragments.
 ## Tag reference
 
 PFML 1.0 supports the following six elements. Authoring and serialization share
-one content model; there is no separate preservation mode.
+one content model.
 
 | Element | Purpose | Attributes |
 | --- | --- | --- |
@@ -134,7 +136,7 @@ An empty scope is allowed and produces no words.
 
 | Attribute | Required | Meaning and default |
 | --- | --- | --- |
-| `language` | No | Language ID for automatic text and words in this scope. Omission inherits the surrounding scope or caller context; `language=""` clears it. Inner declarations override it. |
+| `language` | No | Language ID for automatic text and words in this scope. Omission inherits the surrounding scope; `language=""` clears it. Inner declarations override it. |
 
 ```xml
 <scope language="zh">你好，<scope language="en">hello world</scope>。</scope>
@@ -156,12 +158,12 @@ output words.
 **Contents:** source character data when there are no child elements, or
 pronunciation children at one level: `reading`, `path`, `group` or `phoneme`.
 When there are child elements, source text can only be supplied with the `text`
-attribute. There is no `text` child element.
+attribute.
 
 | Attribute | Required | Meaning and default |
 | --- | --- | --- |
 | `text` | Conditional | Maps to `G2PWord.text`. An automatic word needs non-whitespace source text, either here or as character data. For direct results, an omitted or empty value is filled from surviving pronunciation labels. |
-| `language` | No | Maps to `G2PWord.language`. Omission inherits the surrounding scope or caller context; an empty value clears it to `None`. |
+| `language` | No | Maps to `G2PWord.language`. Omission inherits the surrounding scope; an empty value clears it to `None`. |
 | `script` | No | Compact single-group script label. Requires the `phonemes` attribute. An omitted or empty label is filled from that group's phonemes. |
 | `phonemes` | No | Compact, whitespace-separated final phoneme names. Its presence makes the word direct and creates one reading, one path and one group. `phonemes=""` supplies silence and the word is omitted from results. Cannot accompany pronunciation children. |
 | `language-kind` | No; direct results only | The only value is `any`, encoding `Language.ANY` independently of surrounding language context. Cannot accompany a `language` attribute. |
@@ -352,7 +354,7 @@ they never introduce candidate choices.
 
 The content-bearing levels are `word` (source text), `group` (pronunciation
 script) and `phoneme` (final symbols). The `reading` and `path` elements organize
-candidates. No additional `alternatives` element is used.
+candidates.
 
 | Supplied siblings | At fragment/scope level | Inside a pronunciation parent |
 | --- | --- | --- |
@@ -437,13 +439,13 @@ assert restored == words
 
 Each serialized word explicitly sets its language: `language="..."` for an ID,
 `language=""` for `None`, or `language-kind="any"` for `Language.ANY`. It therefore
-keeps its language even if the fragment is later placed inside a scope or parsed
-with a caller default. The enum marker remains distinct from a literal string
+keeps its language even if the fragment is later placed inside a scope. The enum
+marker remains distinct from a literal string
 such as `"*"`; an empty language string is normalized to `None`.
 
 Phonemes use `symbol` attributes to preserve each atomic string, including
 embedded whitespace, without imposing an inventory or splitting language
-prefixes. There is no `mode` attribute.
+prefixes.
 
 Serialization escapes XML syntax and carriage returns. Strings containing
 characters XML 1.0 cannot represent fail explicitly. The round-trip guarantee
@@ -461,20 +463,25 @@ converter.language = ("en",)
 pipeline = G2PPipeline(converters=[converter])
 words = pipeline.convert_pfml('<scope language="en"><word>hi</word></scope>')
 assert words[0].readings[0].paths[0][0].phonemes == ["HH", "AY"]
-plan = parse_pfml('<word>hi</word><phoneme>sil</phoneme>', language="en")
+plan = parse_pfml('<scope language="en"><word>hi</word><phoneme>sil</phoneme></scope>')
 assert len(plan.parts) == 2
 assert G2PPipeline().convert_pfml(to_pfml(words)) == words
 ```
 
-`parse_pfml(source, language=None)` validates the whole fragment and returns a
-`PFMLDocument` without invoking G2P. `PFMLText.fixed` identifies a fixed word;
+`parse_pfml(source, *, language=None)` validates the whole fragment and returns a
+`PFMLDocument` without invoking G2P. Its optional `language` argument supplies
+the initial inherited language. `PFMLText.fixed` identifies a fixed word;
 other text requests retain automatic segmentation. `PFMLError` reports syntax
 and content-model failures. The pipeline parses the complete input before it
 invokes any converter.
 
-`convert_pfml(source, language=None, languages=None)` executes that normalized
-plan and returns ordinary `G2PWord` objects. Manual-only inputs work with an
-empty pipeline. `to_pfml(words)` returns a rootless fragment of direct words.
+`convert_pfml(source, *, languages=None)` executes that normalized plan and
+returns ordinary `G2PWord` objects. An outer `scope` sets the default language.
+The `languages` argument uses the same converter-filtering policy as `convert()`
+for automatic text without an effective language declaration. Manual-only inputs
+work with an empty pipeline.
+
+`to_pfml(words)` returns a rootless fragment of direct words.
 
 `Converter.convert(text) -> list[G2PWord]` and
 `Converter.convert_word(text) -> G2PWord | None` are framework entry points.

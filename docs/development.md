@@ -48,7 +48,7 @@ dependency.
 ```shell
 python -m build
 python -m twine check dist/*
-python -m pip download --only-binary=:all: --dest wheelhouse dist/g2pflow-0.2.0-py3-none-any.whl "setuptools>=77.0.3" wheel
+python -m pip download --only-binary=:all: --dest wheelhouse dist/g2pflow-0.3.0-py3-none-any.whl "setuptools>=77.0.3" wheel
 pytest --run-distribution -m distribution
 ```
 
@@ -102,14 +102,14 @@ publisher under that project's publishing settings.
 1. Update `project.version` in `pyproject.toml`, commit and push the change.
 2. Open https://github.com/openvpi/g2pflow/releases/new and create a tag matching
    the package version exactly, prefixed with `v`, on the intended commit.
-   For version `0.2.0`, use the tag `v0.2.0`.
+   For version `0.3.0`, use the tag `v0.3.0`.
 3. Publish the GitHub Release. A saved draft does not publish to PyPI.
 4. The `Publish to PyPI` workflow validates the tag, runs the complete test and
    build workflow on that tagged commit, then uploads its wheel and sdist.
 5. Check the completed workflow and https://pypi.org/project/g2pflow/.
 
 Both published releases and published prereleases trigger this workflow; use a
-matching package version such as `0.2.0rc1` and tag `v0.2.0rc1` for prereleases.
+matching package version such as `0.3.0rc1` and tag `v0.3.0rc1` for prereleases.
 Uploading uses the artifacts from the successful checks in that same run and
 does not rebuild them in the publishing job. Only the publishing job has the
 OIDC permission. PyPI does not allow replacing an already uploaded file; publish

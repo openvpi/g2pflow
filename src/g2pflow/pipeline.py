@@ -86,17 +86,17 @@ class G2PPipeline:
         return result
 
     def convert_pfml(
-        self, source: str, *, language: str | None = None,
-        languages: list[str] | None = None,
+        self, source: str, *, languages: list[str] | None = None,
     ) -> list[G2PWord]:
         """Convert a PFML fragment, preserving all non-silent direct candidates.
 
-        language is the inherited default. Scoped languages select only
-        converters explicitly registered/configured for that language. The
-        languages filter applies to unscoped automatic text as in convert().
+        Use an outer scope element to set a default language. Scoped languages
+        select only converters explicitly registered/configured for that
+        language. The languages filter applies to unscoped automatic text as
+        in convert(); explicit language declarations take precedence.
         Complete direct results require neither converters nor preprocessors.
         """
-        document = parse_pfml(source, language=language)
+        document = parse_pfml(source)
         result: list[G2PWord] = []
         for part in document.parts:
             if isinstance(part, G2PWord):

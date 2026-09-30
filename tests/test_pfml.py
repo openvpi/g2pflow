@@ -55,11 +55,11 @@ def test_phoneme_language_prefix_is_local_and_independent_of_word_scope():
               '<phoneme language="zh" symbol="n"/><phoneme symbol="i"/>'
               '<phoneme language="en" symbol="AH0"/>'
               '</group></word></scope>')
-    words = result(source, language="ja")
+    words = result(f'<scope language="ja">{source}</scope>')
     assert words == [G2PWord("你", "cmn", [G2PReading([[
         G2PGroup("ni", ["zh/n", "i", "en/AH0"]),
     ]])])]
-    assert result(to_pfml(words), language="fr") == words
+    assert result(f'<scope language="fr">{to_pfml(words)}</scope>') == words
 
 
 def test_phoneme_symbol_attribute_preserves_literal_content():
@@ -197,8 +197,9 @@ def test_scopes_resolve_ambiguous_scripts_and_preserve_automatic_segmentation():
     japanese = tagged(CharPhonemeConverter({"学": ["G"], "生": ["S"]}), "ja")
     english = tagged(PassthroughConverter(), "en")
     pipeline = G2PPipeline(converters=[PassthroughConverter(), chinese, japanese, english])
-    words = pipeline.convert_pfml('学生<scope language="ja"><word>学生</word></scope>'
-                                  '<scope language="en">one two</scope>学生', language="cmn")
+    words = pipeline.convert_pfml('<scope language="cmn">学生'
+                                  '<scope language="ja"><word>学生</word></scope>'
+                                  '<scope language="en">one two</scope>学生</scope>')
     assert [word.text for word in words] == ["学", "生", "学生", "one", "two", "学", "生"]
     assert [word.language for word in words] == ["cmn", "cmn", "ja", "en", "en", "cmn", "cmn"]
     assert words[2].readings[0].paths[0][0].phonemes == ["G", "S"]
@@ -215,7 +216,20 @@ def test_word_language_overrides_scope_and_empty_language_clears_it():
                                   '<scope language="">y</scope>z</scope>')
     assert [word.language for word in words] == ["en", "en", "ja"]
     assert pipeline.convert_pfml("x", languages=["ja"])[0].language == "ja"
-    assert result('<scope language="ja"><phoneme>X</phoneme></scope>', language="en")[0].language == "ja"
+    assert result('<scope language="en"><scope language="ja">'
+                  '<phoneme>X</phoneme></scope></scope>')[0].language == "ja"
+
+
+@pytest.mark.parametrize("source", ["x", '<word text="x"/>'])
+def test_languages_filter_only_applies_to_automatic_text_without_an_effective_language(source):
+    pipeline = G2PPipeline(converters=[tagged(PassthroughConverter(), "ja"),
+                                      tagged(PassthroughConverter(), "en")])
+    fragment = (source + f'<scope language="ja">{source}'
+                f'<scope language="">{source}</scope></scope>'
+                '<word text="direct" language="ja" phonemes="DIRECT"/>')
+    words = pipeline.convert_pfml(fragment, languages=["en"])
+    assert [word.language for word in words] == ["en", "ja", "en", "ja"]
+    assert words[-1].readings[0].paths == [[G2PGroup("DIRECT", ["DIRECT"])]]
 
 
 @pytest.mark.parametrize("language_id", ["zh", "custom_zh.v2", "Voice ID", " voice-id ", "voice:alpha/beta", "voice&<id>"])
@@ -225,7 +239,7 @@ def test_language_ids_are_opaque_application_strings(language_id):
     pipeline = G2PPipeline(converters=[converter])
     scoped = pipeline.convert_pfml(f'<scope language={encoded}><word text="x"/></scope>')
     assert scoped[0].language == language_id
-    assert pipeline.convert_pfml('<word text="x"/>', language=language_id) == scoped
+    assert pipeline.convert_pfml(f'<word text="x" language={encoded}/>') == scoped
     direct = result(f'<phoneme language={encoded} symbol="ong"/>')
     assert direct[0].readings[0].paths[0][0].phonemes == [f"{language_id}/ong"]
     assert result(to_pfml(scoped + direct)) == scoped + direct
@@ -407,7 +421,8 @@ def test_ordinary_pfml_round_trip_preserves_complete_candidates_and_language_typ
     assert 'symbol=' in serialized
     assert result(serialized) == words
     # Serialized language markers override foreign scopes without a special mode.
-    assert result('<scope language="ja">' + serialized + '</scope>', language="en") == words
+    assert result('<scope language="en"><scope language="ja">'
+                  + serialized + '</scope></scope>') == words
     assert to_pfml(result(serialized)) == serialized
     assert result(to_pfml([])) == []
 

@@ -37,8 +37,11 @@ scope parameter is part of g2pflow.
 
 For per-range language scopes, fixed word boundaries, direct multi-candidate
 pronunciations and lossless serialization, see [PFML 1.0](pfml.md).
-`pipeline.convert_pfml(source, language="zh")` uses the same converters with
-explicit language routing. Scoped converters must declare that language;
+`pipeline.convert_pfml('<scope language="zh">你好</scope>')` uses the same
+converters with explicit language routing. An outer `scope` sets the default
+language. The optional `languages` argument filters only automatic text without
+an effective language declaration, matching `convert()`; explicit declarations
+take precedence. Scoped converters must declare that language;
 configure `language` on neutral dictionary/LSTM converters before using them
 inside a language scope.
 
