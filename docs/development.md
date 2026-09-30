@@ -48,7 +48,7 @@ dependency.
 ```shell
 python -m build
 python -m twine check dist/*
-python -m pip download --only-binary=:all: --dest wheelhouse dist/g2pflow-0.1.0-py3-none-any.whl "setuptools>=77.0.3" wheel
+python -m pip download --only-binary=:all: --dest wheelhouse dist/g2pflow-0.2.0-py3-none-any.whl "setuptools>=77.0.3" wheel
 pytest --run-distribution -m distribution
 ```
 
@@ -102,7 +102,7 @@ publisher under that project's publishing settings.
 1. Update `project.version` in `pyproject.toml`, commit and push the change.
 2. Open https://github.com/openvpi/g2pflow/releases/new and create a tag matching
    the package version exactly, prefixed with `v`, on the intended commit.
-   The initial version is `0.1.0`, so its tag is `v0.1.0`.
+   For version `0.2.0`, use the tag `v0.2.0`.
 3. Publish the GitHub Release. A saved draft does not publish to PyPI.
 4. The `Publish to PyPI` workflow validates the tag, runs the complete test and
    build workflow on that tagged commit, then uploads its wheel and sdist.

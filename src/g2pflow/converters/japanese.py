@@ -5,7 +5,7 @@ from pathlib import Path
 
 from ..registry import converter
 from .base import (
-    Converter, G2PConversionError, G2PGroup, G2PPath, G2PReading, G2PWord,
+    Converter, G2PConversionError, G2PPath, G2PReading, G2PWord,
     compose_word,
 )
 from .dictionary import PronunciationScriptDictionaryConverter
@@ -97,28 +97,15 @@ _CONSONANT_LEADING = frozenset(
 )
 
 
-def _apply_sokuon(romaji_list: list[str]) -> list[str]:
-    """Resolve gemination: replace 'cl' with the leading consonant of the
-    next non-empty romaji token.  Empty strings (placeholders for skipped
-    kana) are passed through unchanged.  Returns a list of the same length."""
-    result: list[str] = []
-    i = 0
-    while i < len(romaji_list):
-        r = romaji_list[i]
-        if r == "cl":
-            # Find next non-placeholder romaji
-            j = i + 1
-            while j < len(romaji_list) and romaji_list[j] == "":
-                j += 1
-            if j < len(romaji_list):
-                nxt = romaji_list[j]
-                if nxt[0] in _CONSONANT_LEADING:
-                    result.append(nxt[0])
-                    i += 1
-                    continue
-        result.append(r)
-        i += 1
-    return result
+def _sokuon_script(hiragana: str) -> str | None:
+    """Return the combined dictionary key for a sokuon-prefixed kana unit."""
+    if not hiragana.startswith("っ"):
+        return None
+    following = hiragana[1:].lstrip("ー゜")
+    script = _KANA_TO_ROMAJI.get(following, "")
+    if script and script != "cl" and script[0] in _CONSONANT_LEADING:
+        return script[0] + script
+    return None
 
 
 @converter(id="japanese-kana", language="ja,jpn")
@@ -130,8 +117,9 @@ class JapaneseKanaConverter(PronunciationScriptDictionaryConverter):
 
     Parameters mirror cpp-kana:
         *dict_path*: romaji-to-phoneme dictionary.
-        *double_written_sokuon*: enable gemination resolution
-          (``cl`` + consonant -> consonant gemination).
+        *double_written_sokuon*: use combined romaji dictionary keys such as
+          ``tta`` instead of separate ``cl`` and ``ta`` keys. Phonemes always
+          come from the dictionary and are never doubled by this option.
     """
 
     def __init__(
@@ -146,17 +134,31 @@ class JapaneseKanaConverter(PronunciationScriptDictionaryConverter):
     def find(self, text: str) -> tuple[int, int] | None:
         return find_run(text, is_kana)
 
+    def _tokenize(self, text: str) -> list[str]:
+        words = super()._tokenize(text)
+        if not self._double_written_sokuon:
+            return words
+        result: list[str] = []
+        i = 0
+        while i < len(words):
+            if _kata_to_hira(words[i]) == "っ":
+                j = i + 1
+                while j < len(words) and words[j] in ("ー", "゜"):
+                    j += 1
+                if j < len(words):
+                    combined = "".join(words[i:j + 1])
+                    if _sokuon_script(_kata_to_hira(combined)) is not None:
+                        result.append(combined)
+                        i = j + 1
+                        continue
+            result.append(words[i])
+            i += 1
+        return result
+
     def script_to_paths(self, script: str) -> list[G2PPath]:
         if script == "":
             return [[]]
-        if script in self._script_dict:
-            return super().script_to_paths(script)
-        # Single consonants from gemination pass through directly
-        if len(script) == 1 and script in _CONSONANT_LEADING:
-            return [[G2PGroup(script=script, phonemes=[script])]]
-        raise KeyError(
-            f"Script token {script!r} not found in script-to-phoneme dict."
-        )
+        return super().script_to_paths(script)
 
     def text_to_scripts(self, words: list[str]) -> list[list[str]]:
         # Convert katakana to hiragana for unified lookup
@@ -168,14 +170,8 @@ class JapaneseKanaConverter(PronunciationScriptDictionaryConverter):
             if t in ("ー", "゜"):
                 romaji_list.append("")
                 continue
-            r = _KANA_TO_ROMAJI.get(t)
-            if r is not None:
-                romaji_list.append(r)
-            else:
-                romaji_list.append(t)
-
-        if self._double_written_sokuon:
-            romaji_list = _apply_sokuon(romaji_list)
+            r = _sokuon_script(t) if self._double_written_sokuon else None
+            romaji_list.append(r or _KANA_TO_ROMAJI.get(t, t))
 
         return [[r] for r in romaji_list]
 
@@ -341,7 +337,7 @@ class JapaneseMecabConverter(Converter):
                 and any(_kata_to_hira(pron).rstrip("ー゜").endswith("っ")
                         for pron in (word_readings[-1][1] or [word_readings[-1][0]]))
             ):
-                # Keep gemination and the following reading in one path choice.
+                # Keep a combined sokuon dictionary key within one path choice.
                 previous, previous_readings = word_readings[-1]
                 word_readings[-1] = (
                     previous + surface,

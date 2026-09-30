@@ -81,8 +81,12 @@ class PronunciationScriptConverter(Converter, ABC):
         """Map a reading script to complete paths with group script labels."""
         ...
 
+    def _tokenize(self, text: str) -> list[str]:
+        """Split source text into units with individual pronunciation scripts."""
+        return split_words(text)
+
     def _convert(self, text: str) -> list[G2PWord]:
-        words = split_words(text)
+        words = self._tokenize(text)
         scripts_per_token = self.text_to_scripts(words)
         if len(scripts_per_token) != len(words):
             raise ValueError("text_to_scripts must preserve word count.")

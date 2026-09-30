@@ -6,7 +6,7 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
-from g2pflow import G2PConversionError, G2PPipeline
+from g2pflow import G2PConversionError, G2PGroup, G2PPipeline
 from g2pflow.converters.japanese import JapaneseMecabConverter
 
 
@@ -236,17 +236,33 @@ def test_missing_non_kana_reading_raises(kana_dict):
     assert exc.value.unconverted_tokens == ["猫"]
 
 
-def test_gemination_merges_words_and_pickle_drops_native_tagger(kana_dict):
-    instance = JapaneseMecabConverter(str(kana_dict), double_written_sokuon=True)
+def test_double_written_sokuon_merges_dictionary_key_and_pickle_drops_native_tagger(dictionary):
+    path = dictionary("kka\tCLOSURE K A\n")
+    instance = JapaneseMecabConverter(str(path), double_written_sokuon=True)
     instance._tagger = TaggerDouble(["っ", "か"], {})
     word = instance.convert("っか")[0]
     assert word.text == "っか"
-    assert [group.phonemes for group in word.readings[0].paths[0]] == [["k"], ["k", "a"]]
+    assert word.readings[0].paths == [[G2PGroup("kka", ["CLOSURE", "K", "A"])]]
     instance._tagger = lambda: None
     restored = pickle.loads(pickle.dumps(instance))
     assert restored._tagger is None
     assert instance._tagger is not None
     assert restored._double_written_sokuon is True
+
+
+def test_mecab_sokuon_uses_dictionary_candidates_in_each_whole_word_reading(dictionary):
+    path = dictionary("ta\tT A\ntta\tCLOSURE T A\ntta\tGEM_T A\nkka\tGEM_K A\n")
+    instance = JapaneseMecabConverter(str(path), double_written_sokuon=True)
+    instance._tagger = TaggerDouble(["word"], {"word": [
+        [node("word", "タッタ")], [node("word", "タッカ")],
+    ]})
+    word = instance.convert_word("word")
+    assert [[[(group.script, group.phonemes) for group in path] for path in reading.paths]
+            for reading in word.readings] == [
+        [[("ta", ["T", "A"]), ("tta", ["CLOSURE", "T", "A"])],
+         [("ta", ["T", "A"]), ("tta", ["GEM_T", "A"])]],
+        [[("ta", ["T", "A"]), ("kka", ["GEM_K", "A"])]],
+    ]
 
 
 @pytest.mark.parametrize("nbest", [True, False, 0, -1, 1.5])

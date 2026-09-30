@@ -1,6 +1,6 @@
 import pytest
 
-from g2pflow import G2PConversionError, G2PGroup, Language
+from g2pflow import G2PConversionError, G2PGroup, G2PPipeline, Language
 from g2pflow.converters.chinese import JyutpingConverter, PinyinConverter
 from g2pflow.converters.dictionary import DictionaryConverter, load_pronunciation_dict
 from g2pflow.converters.japanese import JapaneseKanaConverter
@@ -130,13 +130,63 @@ def test_kana_digraphs_katakana_and_empty_pronunciation(kana_dict):
     assert converter.find("wordきゃっと猫") == (4, 8)
 
 
-def test_kana_gemination_skips_empty_scripts(kana_dict):
-    converter = JapaneseKanaConverter(str(kana_dict), double_written_sokuon=True)
-    assert [phones(word) for word in converter.convert("っーかっ")] == [
-        [["k"]], [["k", "a"]], [["cl"]],
+@pytest.mark.parametrize("text,script", [
+    ("った", "tta"), ("ッタ", "tta"), ("っきゃ", "kkya"),
+])
+def test_double_written_sokuon_looks_up_one_complete_dictionary_key(dictionary, text, script):
+    path = dictionary(f"{script}\tCLOSURE ONSET VOWEL\n{script}\tGEM VOWEL\n")
+    converter = JapaneseKanaConverter(str(path), double_written_sokuon=True)
+    words = converter.convert(text)
+    assert len(words) == 1
+    assert words[0].text == text
+    assert words[0].readings[0].paths == [
+        [G2PGroup(script, ["CLOSURE", "ONSET", "VOWEL"])],
+        [G2PGroup(script, ["GEM", "VOWEL"])],
     ]
+
+
+def test_double_written_sokuon_skips_empty_scripts_and_preserves_trailing_cl(dictionary):
+    path = dictionary("kka\tGEM_K A\ncl\tCLOSURE\n")
+    converter = JapaneseKanaConverter(str(path), double_written_sokuon=True)
+    words = converter.convert("っーかっ")
+    assert [word.text for word in words] == ["っーか", "っ"]
+    assert [phones(word) for word in words] == [[["GEM_K", "A"]], [["CLOSURE"]]]
+
+
+def test_sokuon_before_vowel_keeps_the_cl_dictionary_key(dictionary):
+    path = dictionary("cl\tCLOSURE\na\tVOWEL\n")
+    converter = JapaneseKanaConverter(str(path), double_written_sokuon=True)
+    assert [phones(word) for word in converter.convert("っあ")] == [
+        [["CLOSURE"]], [["VOWEL"]],
+    ]
+
+
+def test_sokuon_disabled_uses_separate_dictionary_entries(dictionary):
+    path = dictionary("cl\tCLOSURE\nta\tONSET VOWEL\n")
+    converter = JapaneseKanaConverter(str(path))
+    words = converter.convert("った")
+    assert [word.text for word in words] == ["っ", "た"]
+    assert [phones(word) for word in words] == [[["CLOSURE"]], [["ONSET", "VOWEL"]]]
+
+
+def test_double_written_sokuon_requires_the_combined_key_without_phoneme_fallback(dictionary):
+    path = dictionary("cl\tCLOSURE\nta\tONSET VOWEL\n")
+    converter = JapaneseKanaConverter(str(path), double_written_sokuon=True)
+    with pytest.raises(KeyError, match="tta"):
+        converter.convert("った")
     with pytest.raises(KeyError, match="not found"):
-        converter.script_to_paths("not-a-script")
+        converter.script_to_paths("t")
+
+
+def test_pfml_fixed_kana_word_keeps_combined_script_and_dictionary_candidates(dictionary):
+    path = dictionary("ka\tK A\ntta\tCLOSURE T A\ntta\tGEM_T A\n")
+    converter = JapaneseKanaConverter(str(path), double_written_sokuon=True)
+    word = G2PPipeline(converters=[converter]).convert_pfml('<word text="かった" language="ja"/>')[0]
+    assert word.text == "かった"
+    assert word.readings[0].paths == [
+        [G2PGroup("ka", ["K", "A"]), G2PGroup("tta", ["CLOSURE", "T", "A"])],
+        [G2PGroup("ka", ["K", "A"]), G2PGroup("tta", ["GEM_T", "A"])],
+    ]
 
 
 @pytest.mark.parametrize("forms,script,expected", [

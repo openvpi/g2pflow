@@ -92,8 +92,18 @@ then preserve other supported readings in order.
 Kana conversion keeps digraphs together, normalizes katakana to hiragana, and
 maps through the romaji table. Long-vowel marks and the standalone handakuten
 produce no standalone phonemes and are omitted from output.
-`double_written_sokuon=False` preserves `cl`;
-enabling it resolves gemination against the next non-empty romaji token.
+`double_written_sokuon=False` looks up a sokuon as `cl` separately from the
+following kana. With `True`, the sokuon and following consonant-leading kana
+form one pronunciation unit and use a combined dictionary key: for example,
+`った` uses `tta`, and `っきゃ` uses `kkya`. Skipped long-vowel marks and standalone
+handakuten do not interrupt that lookup. A trailing sokuon or one before a vowel
+continues to use `cl`.
+
+The option changes only pronunciation-script spelling and grouping. Every
+phoneme sequence, including all alternatives, comes unchanged from the dictionary
+entry; no consonant phoneme is inserted or doubled. For example, `tta\tcl t a`
+produces `script="tta"` and `phonemes=["cl", "t", "a"]`. A missing combined key
+raises `KeyError` instead of falling back to separate keys or guessed phonemes.
 
 ## Japanese MeCab and UniDic
 
