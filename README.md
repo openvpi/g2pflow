@@ -47,6 +47,34 @@ assert word.readings[0].paths[0][0].phonemes == ["HH", "AY"]
 Configuration is validated by independent Pydantic models; there is no YAML
 loader, training configuration system or command-line interface.
 
+## PFML markup
+
+PFML (Pronunciation Flow Markup Language) adds language scopes, fixed word
+boundaries and complete pronunciation candidate trees to ordinary text:
+
+```python
+from g2pflow import G2PPipeline, to_pfml
+
+# Direct phonemes need no dictionaries, models or converters.
+words = G2PPipeline().convert_pfml(
+    '<scope language="ja"><word script="ka" phonemes="k a">か</word></scope>'
+)
+assert words[0].readings[0].paths[0][0].phonemes == ["k", "a"]
+assert G2PPipeline().convert_pfml(to_pfml(words)) == words
+```
+
+`<scope language="ja">東京へ行く</scope>` routes a whole text range to Japanese
+G2P; `<word language="zh">重庆</word>` fixes one output word. Automatic text
+requires a pipeline configured for the corresponding language. Direct results
+must provide all final phonemes; they preserve multiple readings, paths and
+group boundaries without invoking G2P or filtering candidates. Missing outer
+containers can be omitted, down to `<phoneme>ong</phoneme>`.
+
+There is no required root tag. `convert()` still handles plain text, while
+`convert_pfml()` handles XML fragments. Python outputs remain `G2PWord` objects;
+`to_pfml()` serializes successful outputs losslessly, including all pronunciation
+candidates and language markers. See the [PFML 1.0 specification and API](docs/pfml.md).
+
 ## Output
 
 - `G2PWord(text, language, readings)` is a converter-defined semantic word.
@@ -56,9 +84,10 @@ loader, training configuration system or command-line interface.
 
 For example, a reading of Japanese `猫` may contain a path with groups
 `("ne", ["n", "e"])` and `("ko", ["k", "o"])`. Different paths can have
-different group boundaries. `paths=[]` has no candidates; `paths=[[]]` has one
-empty pronunciation. The package does not select candidates against audio or
-encode phones into model vocabulary IDs.
+different group boundaries. The framework filters silent groups and paths,
+omits words left without pronunciation, and fills missing display labels.
+Missing readings or path candidates are conversion failures. The package does
+not select candidates against audio or encode phones into model vocabulary IDs.
 
 ## Components and resources
 

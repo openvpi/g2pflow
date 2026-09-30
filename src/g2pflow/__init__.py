@@ -8,9 +8,11 @@ from .api import (
 from .config import ConverterConfig, G2PPipelineConfig, PreprocessorConfig
 from .converters.base import (
     Converter, G2PConversionError, G2PGroup, G2PPath, G2PReading, G2PWord,
+    G2PWordBoundaryError,
 )
 from .discovery import discover_plugins, register_plugin_paths
 from .pipeline import G2PPipeline
+from .pfml import PFMLDocument, PFMLError, PFMLPart, PFMLText, parse_pfml, to_pfml
 from .preprocessors.base import Preprocessor
 from .registry import (
     Language,
@@ -25,7 +27,8 @@ from .registry import (
 __all__ = [
     "Converter", "ConverterConfig", "G2PConversionError", "G2PGroup",
     "G2PPath", "G2PPipeline", "G2PPipelineConfig", "G2PReading", "G2PWord",
-    "Language", "Preprocessor", "PreprocessorConfig",
+    "G2PWordBoundaryError", "Language", "Preprocessor", "PreprocessorConfig",
+    "PFMLDocument", "PFMLError", "PFMLPart", "PFMLText", "parse_pfml", "to_pfml",
     "build_converter_from_config", "build_pipeline_from_config",
     "build_preprocessor_from_config", "converter", "discover_plugins",
     "get_converter", "get_preprocessor", "list_converters",

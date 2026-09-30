@@ -26,8 +26,8 @@ class Clean(Preprocessor):
 
 @converter(id="{identifier}", language="en")
 class Custom(PassthroughConverter):
-    def convert(self, text):
-        words = super().convert(text)
+    def _convert(self, text):
+        words = super()._convert(text)
         for word in words:
             word.readings[0].paths[0][0].phonemes = ["{phone}"]
         return words

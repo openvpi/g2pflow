@@ -4,7 +4,10 @@ from itertools import product
 from pathlib import Path
 
 from ..registry import converter
-from .base import Converter, G2PConversionError, G2PGroup, G2PPath, G2PReading, G2PWord
+from .base import (
+    Converter, G2PConversionError, G2PGroup, G2PPath, G2PReading, G2PWord,
+    compose_word,
+)
 from .dictionary import PronunciationScriptDictionaryConverter
 from .text import SMALL_KANA, find_run, is_kana
 
@@ -286,7 +289,7 @@ class JapaneseMecabConverter(Converter):
         return readings
 
     def _reading(self, kana: str) -> G2PReading:
-        kana_words = self._kana.convert(kana)
+        kana_words = self._kana._convert(kana)
         alternatives = [
             [path for reading in word.readings for path in reading.paths]
             for word in kana_words
@@ -303,7 +306,13 @@ class JapaneseMecabConverter(Converter):
                 paths.append(path)
         return G2PReading(paths=paths)
 
-    def convert(self, text: str) -> list[G2PWord]:
+    def _convert_word(self, text: str) -> G2PWord | None:
+        pronunciations = self._pronunciations(text)
+        if pronunciations:
+            return G2PWord(text, readings=[self._reading(pron) for pron in pronunciations])
+        return compose_word(text, self._convert(text))
+
+    def _convert(self, text: str) -> list[G2PWord]:
         if not text:
             return []
         # Snapshot surfaces before N-best calls replace MeCab's lattice.
@@ -349,5 +358,5 @@ class JapaneseMecabConverter(Converter):
                     text=surface, readings=[self._reading(pron) for pron in pronunciations],
                 ))
             else:
-                result.extend(self._kana.convert(surface))
+                result.extend(self._kana._convert(surface))
         return result

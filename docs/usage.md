@@ -35,6 +35,13 @@ scope parameter is part of g2pflow.
 
 ## Routing and languages
 
+For per-range language scopes, fixed word boundaries, direct multi-candidate
+pronunciations and lossless serialization, see [PFML 1.0](pfml.md).
+`pipeline.convert_pfml(source, language="zh")` uses the same converters with
+explicit language routing. Scoped converters must declare that language;
+configure `language` on neutral dictionary/LSTM converters before using them
+inside a language scope.
+
 Global preprocessors transform `[text]` into fragments. Within each fragment,
 the earliest range claimed by a higher-priority converter is reserved for that
 converter. Its left remainder goes to lower priorities; its right remainder
@@ -44,7 +51,10 @@ text order and raises `G2PConversionError` before conversion begins.
 Each converter applies its own preprocessors to its claimed runs and can emit
 zero or more words. Conversion errors propagate; they do not trigger fallback
 to a lower-priority converter. The pipeline preserves the resulting word text,
-candidate ordering and grouping.
+candidate ordering and grouping. The converter base class filters silent groups
+and paths, omits parents left empty, and fills missing display labels. A result
+with no readings or a reading with no candidate paths raises `G2PConversionError`.
+The same rules apply to direct converter calls and PFML results.
 
 `languages=[...]` filters active converters. A converter's language is a tuple
 of aliases, `None`, or `Language.ANY`. The first matching registered alias is
@@ -81,7 +91,8 @@ then preserve other supported readings in order.
 
 Kana conversion keeps digraphs together, normalizes katakana to hiragana, and
 maps through the romaji table. Long-vowel marks and the standalone handakuten
-produce empty pronunciations. `double_written_sokuon=False` preserves `cl`;
+produce no standalone phonemes and are omitted from output.
+`double_written_sokuon=False` preserves `cl`;
 enabling it resolves gemination against the next non-empty romaji token.
 
 ## Japanese MeCab and UniDic

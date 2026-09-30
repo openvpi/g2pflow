@@ -6,7 +6,7 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
-from g2pflow import G2PConversionError
+from g2pflow import G2PConversionError, G2PPipeline
 from g2pflow.converters.japanese import JapaneseMecabConverter
 
 
@@ -205,9 +205,15 @@ def test_kana_fallback_and_split_digraph(kana_dict):
     instance = JapaneseMecabConverter(str(kana_dict))
     instance._tagger = TaggerDouble(["き", "ゃ", "ー"], {})
     words = instance.convert("きゃー")
-    assert [word.text for word in words] == ["きゃ", "ー"]
+    assert [word.text for word in words] == ["きゃ"]
     assert words[0].readings[0].paths[0][0].phonemes == ["ky", "a"]
-    assert words[1].readings[0].paths == [[]]
+
+
+def test_silent_mecab_readings_do_not_appear_in_results(kana_dict):
+    instance = JapaneseMecabConverter(str(kana_dict))
+    instance._tagger = TaggerDouble(["ー"], {"ー": [[node("ー", "ー")]]})
+    assert instance.convert("ー") == []
+    assert instance.convert_word("ー") is None
 
 
 def test_nonstandard_kana_fallback_rejoins_split_digraphs(dictionary):
@@ -247,3 +253,21 @@ def test_gemination_merges_words_and_pickle_drops_native_tagger(kana_dict):
 def test_invalid_nbest(kana_dict, nbest):
     with pytest.raises(ValueError, match="positive integer"):
         JapaneseMecabConverter(str(kana_dict), nbest=nbest)
+
+
+def test_pfml_fixed_word_prefers_whole_word_candidates(kana_dict):
+    instance = JapaneseMecabConverter(str(kana_dict))
+    instance._tagger = TaggerDouble(["unwanted", "segmentation"], {"猫": [
+        [node("猫", "ネコ")], [node("猫", "ネカ")],
+    ]})
+    word = G2PPipeline(converters=[instance]).convert_pfml('<word language="ja">猫</word>')[0]
+    assert word.text == "猫"
+    assert [[g.script for g in r.paths[0]] for r in word.readings] == [["ne", "ko"], ["ne", "ka"]]
+
+
+def test_pfml_fixed_word_composes_independent_internal_units(kana_dict):
+    instance = JapaneseMecabConverter(str(kana_dict))
+    instance._tagger = TaggerDouble(["ね", "こ"], {})
+    word = G2PPipeline(converters=[instance]).convert_pfml('<word language="ja">ねこ</word>')[0]
+    assert word.text == "ねこ"
+    assert [[g.script for g in p] for p in word.readings[0].paths] == [["ne", "ko"]]

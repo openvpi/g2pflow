@@ -1,4 +1,9 @@
-from .converters.base import Converter, G2PConversionError, G2PWord, resolve_language
+from dataclasses import replace
+
+from .converters.base import (
+    Converter, G2PConversionError, G2PWord, G2PWordBoundaryError, resolve_language,
+)
+from .pfml import parse_pfml
 from .preprocessors.base import Preprocessor
 from .registry import Language
 
@@ -23,6 +28,11 @@ class G2PPipeline:
             or c.language is Language.ANY
             or any(ln in language_set for ln in c.language)
         ]
+        return self._convert(text, active, languages)
+
+    def _convert(
+        self, text: str, active: list[Converter], languages: list[str] | None,
+    ) -> list[G2PWord]:
         if not active:
             raise ValueError("No converter matches the requested languages.")
 
@@ -71,6 +81,81 @@ class G2PPipeline:
                 if part:
                     words = converter.convert(part)
                     for word in words:
-                        word.language = language
+                        word.language = language or None
                     result.extend(words)
         return result
+
+    def convert_pfml(
+        self, source: str, *, language: str | None = None,
+        languages: list[str] | None = None,
+    ) -> list[G2PWord]:
+        """Convert a PFML fragment, preserving all non-silent direct candidates.
+
+        language is the inherited default. Scoped languages select only
+        converters explicitly registered/configured for that language. The
+        languages filter applies to unscoped automatic text as in convert().
+        Complete direct results require neither converters nor preprocessors.
+        """
+        document = parse_pfml(source, language=language)
+        result: list[G2PWord] = []
+        for part in document.parts:
+            if isinstance(part, G2PWord):
+                result.append(part)
+                continue
+            if not part.text.strip():
+                continue
+            if part.language is None:
+                language_set = set(languages) if languages else None
+                active = [c for c in self._converters
+                          if language_set is None or c.language is None
+                          or c.language is Language.ANY
+                          or any(tag in language_set for tag in c.language)]
+                requested = languages
+            else:
+                active = [c for c in self._converters
+                          if isinstance(c.language, tuple)
+                          and part.language in c.language]
+                requested = [part.language]
+            if not active:
+                raise ValueError(f"No converter matches the PFML language {part.language!r}.")
+            if part.fixed:
+                word = self._convert_fixed(part.text, active, requested)
+                if word is None:
+                    continue
+                if part.language is not None:
+                    word.language = part.language
+                result.append(word)
+            else:
+                words = self._convert(part.text, active, requested)
+                if part.language is not None:
+                    for word in words:
+                        word.language = part.language
+                result.extend(words)
+        return result
+
+    def _convert_fixed(
+        self, text: str, active: list[Converter], languages: list[str] | None,
+    ) -> G2PWord | None:
+        def normalize(value: str, processors: list[Preprocessor]) -> str | None:
+            for processor in processors:
+                parts = processor.process([value])
+                if not parts or parts == [""]:
+                    return None
+                if len(parts) != 1:
+                    raise G2PWordBoundaryError(text, f"{type(processor).__name__} split it")
+                value = parts[0]
+            return value
+
+        normalized = normalize(text, self._preprocessors)
+        if normalized is None:
+            return None
+        for converter in active:
+            if converter.accepts_word(normalized):
+                prepared = normalize(normalized, converter.preprocessors())
+                if prepared is None:
+                    return None
+                word = converter.convert_word(prepared)
+                if word is None:
+                    return None
+                return replace(word, text=text, language=resolve_language(converter.language, languages) or None)
+        raise G2PConversionError([text])

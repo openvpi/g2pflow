@@ -2,7 +2,7 @@
 
 from abc import ABC, abstractmethod
 
-from .base import Converter, G2PGroup, G2PPath, G2PWord, G2PReading
+from .base import Converter, G2PGroup, G2PPath, G2PWord, G2PReading, compose_word
 from .text import split_words
 
 
@@ -40,19 +40,19 @@ class LexiconConverter(Converter, ABC):
     # Converter interface
     # ------------------------------------------------------------------
 
-    def convert(self, text: str) -> list[G2PWord]:
-        result: list[G2PWord] = []
-        for token in split_words(text):
-            pronunciations = self._dict.get(token)
-            if pronunciations is not None:
-                paths = [list(p) for p in pronunciations]
-            else:
-                paths = self.infer_oov(token)
-            result.append(G2PWord(text=token, readings=[G2PReading(paths=[
-                [G2PGroup(script=token, phonemes=p)] if p else []
-                for p in paths
-            ])]))
-        return result
+    def _convert(self, text: str) -> list[G2PWord]:
+        return [self._convert_word(token) for token in split_words(text)]
+
+    def accepts_word(self, text: str) -> bool:
+        return text in self._dict or super().accepts_word(text)
+
+    def _convert_word(self, text: str) -> G2PWord:
+        pronunciations = self._dict.get(text)
+        paths = ([list(p) for p in pronunciations] if pronunciations is not None
+                 else self.infer_oov(text))
+        return G2PWord(text=text, readings=[G2PReading(paths=[
+            [G2PGroup(script=text, phonemes=p)] if p else [] for p in paths
+        ])])
 
 
 class PronunciationScriptConverter(Converter, ABC):
@@ -81,7 +81,7 @@ class PronunciationScriptConverter(Converter, ABC):
         """Map a reading script to complete paths with group script labels."""
         ...
 
-    def convert(self, text: str) -> list[G2PWord]:
+    def _convert(self, text: str) -> list[G2PWord]:
         words = split_words(text)
         scripts_per_token = self.text_to_scripts(words)
         if len(scripts_per_token) != len(words):
@@ -104,3 +104,6 @@ class PronunciationScriptConverter(Converter, ABC):
                 readings.append(G2PReading(paths=paths))
             result.append(G2PWord(text=token, readings=readings))
         return result
+
+    def _convert_word(self, text: str) -> G2PWord | None:
+        return compose_word(text, self._convert(text))

@@ -53,7 +53,7 @@ def test_registration_and_duplicate_ids():
         def find(self, text):
             return None
 
-        def convert(self, text):
+        def _convert(self, text):
             return []
 
     @preprocessor(id="custom")

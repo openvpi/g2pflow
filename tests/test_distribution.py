@@ -27,6 +27,7 @@ def test_archive_contents(artifacts):
     with zipfile.ZipFile(wheel) as archive:
         files = archive.namelist()
         assert "g2pflow/py.typed" in files
+        assert "g2pflow/pfml.py" in files
         assert "g2pflow/encoding.py" not in files
         assert not any(name.startswith(("tests/", "lib/", "dictionaries/", "assets/")) for name in files)
         for language in ("mandarin", "cantonese"):
@@ -48,6 +49,7 @@ def test_archive_contents(artifacts):
         files = archive.getnames()
         assert any(name.endswith("/tests/test_discovery.py") for name in files)
         assert any(name.endswith("/docs/plugins.md") for name in files)
+        assert any(name.endswith("/docs/pfml.md") for name in files)
 
 
 def run(*args, cwd, env):
@@ -95,6 +97,11 @@ config = G2PPipelineConfig.model_validate({'converters': [{
 }]})
 words = build_pipeline_from_config(config).convert('你好')
 assert [word.readings[0].paths[0][0].phonemes for word in words] == [['n', 'i'], ['h', 'ao']]
+from g2pflow import G2PPipeline, parse_pfml, to_pfml
+assert G2PPipeline().convert_pfml(to_pfml(words)) == words
+manual = G2PPipeline().convert_pfml('<phoneme>sil</phoneme>')
+assert manual[0].readings[0].paths[0][0].phonemes == ['sil']
+assert len(parse_pfml('<word>hello</word>').parts) == 1
 kana_dict = Path('kana.txt')
 kana_dict.write_text('ja\\tj a\\n', encoding='utf-8')
 from g2pflow.converters.japanese import JapaneseKanaConverter, JapaneseMecabConverter

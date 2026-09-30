@@ -54,21 +54,24 @@ class DictionaryConverter(Converter):
                 return begin, end
         return None
 
-    def convert(self, text: str) -> list[G2PWord]:
-        result: list[G2PWord] = []
-        for token in split_words(text):
-            pronunciations = self._dict.get(token.lower())
-            if pronunciations is None:
-                raise KeyError(
-                    f"DictionaryConverter: token '{token}' not in dictionary. "
-                    f"find should have filtered it."
-                )
-            paths = [
-                [G2PGroup(script=token, phonemes=list(p))] if p else []
-                for p in pronunciations
-            ]
-            result.append(G2PWord(text=token, readings=[G2PReading(paths=paths)]))
-        return result
+    def _convert(self, text: str) -> list[G2PWord]:
+        return [self._convert_word(token) for token in split_words(text)]
+
+    def accepts_word(self, text: str) -> bool:
+        return bool(text) and text.lower() in self._dict
+
+    def _convert_word(self, text: str) -> G2PWord:
+        pronunciations = self._dict.get(text.lower())
+        if pronunciations is None:
+            raise KeyError(
+                f"DictionaryConverter: token '{text}' not in dictionary. "
+                f"find should have filtered it."
+            )
+        paths = [
+            [G2PGroup(script=text, phonemes=list(p))] if p else []
+            for p in pronunciations
+        ]
+        return G2PWord(text=text, readings=[G2PReading(paths=paths)])
 
 
 class PronunciationScriptDictionaryConverter(PronunciationScriptConverter, ABC):

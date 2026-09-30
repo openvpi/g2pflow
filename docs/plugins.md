@@ -24,7 +24,7 @@ class CustomWord(Converter):
     def find(self, text):
         return (0, len(text)) if text else None
 
-    def convert(self, text):
+    def _convert(self, text):
         return [G2PWord(text=text, readings=[G2PReading(paths=[[
             G2PGroup(script=text, phonemes=["CUSTOM"]),
         ]])])]
@@ -48,8 +48,26 @@ assert pipeline.convert("hello")[0].readings[0].paths[0][0].phonemes == ["CUSTOM
 
 Converter `find()` returns the earliest accepted, non-empty half-open slice
 using Python string indices. It should not perform pronunciation inference.
-`convert()` receives a claimed run and can emit, merge, split or omit words.
+`_convert()` receives a claimed run and can emit, merge, split or omit words.
 `preprocessors()` optionally returns local preprocessors for claimed runs.
+
+The base class owns the public `convert()` and `convert_word()` methods. They
+normalize results automatically, including direct calls outside a pipeline:
+zero-phone groups and empty paths are removed, parents left empty are omitted,
+and missing display labels are filled from surviving pronunciations. A word
+with no readings, a reading with no paths, or an empty phoneme symbol raises
+`G2PConversionError`. Implement the backend hooks instead of overriding these
+public methods; no manual normalization call is needed.
+
+PFML `<word>` inputs additionally use `accepts_word(text)` and
+`_convert_word(text) -> G2PWord | None`. By default, the former requires `find()`
+to cover the whole input and the latter accepts zero or one raw result from
+`_convert()`. Override these hooks for custom fixed-unit handling such as phrase
+lookup. A silent unit is omitted; splitting a fixed word raises
+`G2PWordBoundaryError`. The pipeline does not silently merge plugin outputs.
+When extending another backend hook, call its corresponding protected method
+(for example, `super()._convert(text)`). See the
+[PFML converter contract](pfml.md#python-api-and-converter-contract).
 
 Advanced converters can subclass `LexiconConverter` or
 `PronunciationScriptConverter` from `g2pflow.converters.paradigm`, or

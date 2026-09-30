@@ -22,7 +22,7 @@ class LiteralConverter(Converter):
         start = text.find(self.literal)
         return None if start < 0 else (start, start + len(self.literal))
 
-    def convert(self, text):
+    def _convert(self, text):
         self.calls.append((self.label, text))
         return [G2PWord(text, readings=[G2PReading(paths=[[
             G2PGroup(self.label, [self.label]),
@@ -61,7 +61,7 @@ def test_invalid_claim_ranges(match):
 
 def test_conversion_failure_does_not_fall_back():
     class Broken(LiteralConverter):
-        def convert(self, text):
+        def _convert(self, text):
             raise RuntimeError("backend failed")
     with pytest.raises(RuntimeError, match="backend failed"):
         G2PPipeline(converters=[Broken("x", []), PassthroughConverter()]).convert("x")
@@ -69,7 +69,7 @@ def test_conversion_failure_does_not_fall_back():
 
 def test_empty_conversion_keeps_claim_reserved():
     class Omit(LiteralConverter):
-        def convert(self, text):
+        def _convert(self, text):
             return []
     pipeline = G2PPipeline(converters=[Omit("bc", []), PassthroughConverter()])
     assert [word.text for word in pipeline.convert("abc")] == ["a"]
@@ -87,8 +87,10 @@ def test_local_preprocessing_can_split_rewrite_and_omit():
         def preprocessors(self):
             return [Local()]
 
-        def convert(self, text):
-            return [G2PWord(text.upper()), G2PWord(text * 2, language="wrong")]
+        def _convert(self, text):
+            return [G2PWord(value, language="wrong", readings=[G2PReading([[
+                G2PGroup(value, [value]),
+            ]])]) for value in (text.upper(), text * 2)]
 
     result = G2PPipeline(converters=[Split("ab", [])]).convert("ab")
     assert [word.text for word in result] == ["A", "aa", "B", "bb"]
@@ -127,21 +129,72 @@ def test_language_resolution(tag, languages, expected):
     assert resolve_language(tag, languages) == expected
 
 
-def test_word_structure_and_candidate_identity_are_preserved():
+def test_viable_candidate_structure_is_preserved_and_silent_branches_are_removed():
     words = [G2PWord("merged", readings=[G2PReading(paths=[
         [G2PGroup("a", ["A"]), G2PGroup("b", ["B"])],
         [G2PGroup("ab", ["C"])], [],
-    ]), G2PReading(paths=[])])]
+    ]), G2PReading(paths=[[]])])]
 
     class Output(LiteralConverter):
-        def convert(self, text):
+        def _convert(self, text):
             return words
 
     result = G2PPipeline(converters=[Output("x", [])]).convert("x")
-    assert result[0] is words[0]
-    assert result[0].readings[0].paths[-1] == []
-    assert result[0].readings[1].paths == []
-    assert [len(path) for path in result[0].readings[0].paths] == [2, 1, 0]
+    assert [len(path) for path in result[0].readings[0].paths] == [2, 1]
+    assert len(result[0].readings) == 1
+    assert words[0].readings[0].paths[-1] == []
+    assert words[0].readings[1].paths == [[]]
+
+
+@pytest.mark.parametrize("word", [
+    G2PWord("x"), G2PWord("x", readings=[G2PReading([])]),
+    G2PWord("x", readings=[G2PReading([[G2PGroup("x", [""])]])]),
+])
+def test_incomplete_converter_results_fail_without_fallback(word):
+    class Output(LiteralConverter):
+        def _convert(self, text):
+            return [word]
+    pipeline = G2PPipeline(converters=[Output("x", []), PassthroughConverter()])
+    with pytest.raises(G2PConversionError):
+        Output("x", []).convert("x")
+    with pytest.raises(G2PConversionError):
+        Output("x", []).convert_word("x")
+    with pytest.raises(G2PConversionError):
+        pipeline.convert("x")
+    with pytest.raises(G2PConversionError):
+        pipeline.convert_pfml('<word text="x"/>')
+
+
+def test_empty_groups_are_removed_and_labels_are_filled():
+    class Output(LiteralConverter):
+        def _convert(self, text):
+            return [G2PWord("", readings=[G2PReading([
+                [G2PGroup("silent", [])],
+                [G2PGroup("silent", []), G2PGroup("", ["A"])],
+                [G2PGroup("", ["A"])],
+            ])]), G2PWord("silent", readings=[G2PReading([[]])])]
+    expected = [G2PWord("A | A", readings=[G2PReading([
+        [G2PGroup("A", ["A"])], [G2PGroup("A", ["A"])],
+    ])])]
+    converter = Output("x", [])
+    assert converter.convert("x") == expected
+    assert G2PPipeline(converters=[converter]).convert("x") == expected
+
+
+def test_framework_normalizes_fixed_backend_hooks():
+    class Fixed(LiteralConverter):
+        def _convert_word(self, text):
+            return G2PWord("", readings=[G2PReading([
+                [], [G2PGroup("", ["A"])],
+            ])])
+    assert Fixed("x", []).convert_word("x") == G2PWord("A", readings=[
+        G2PReading([[G2PGroup("A", ["A"])]])])
+
+
+def test_punctuation_only_fixed_word_is_omitted():
+    pipeline = G2PPipeline(preprocessors=[FilterPunctuation()], converters=[PassthroughConverter()])
+    assert pipeline.convert("！。") == []
+    assert pipeline.convert_pfml('<word text="！。"/>') == []
 
 
 def test_preprocessors_unicode_and_apostrophes():

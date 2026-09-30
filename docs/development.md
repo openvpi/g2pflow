@@ -35,6 +35,14 @@ download them during the test. They check the reference pronunciation mappings
 and LstmG2p model described above, plus serialization after native initialization.
 Regular tests do not depend on these files.
 
+PFML conformance and round-trip checks run in the default offline suite. They
+cover language scopes, fixed converter boundaries, lower-level shorthand,
+complete multi-candidate trees, malformed/incomplete markup, silent-branch
+filtering, and lossless serialization of successful outputs and language markers.
+They also cover normalization through the framework's public converter entry
+points. Randomized tree fixtures use a fixed seed and require no extra testing
+dependency.
+
 ## Build and validate distributions
 
 ```shell

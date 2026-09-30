@@ -1,6 +1,6 @@
 import pytest
 
-from g2pflow import G2PGroup, Language
+from g2pflow import G2PConversionError, G2PGroup, Language
 from g2pflow.converters.chinese import JyutpingConverter, PinyinConverter
 from g2pflow.converters.dictionary import DictionaryConverter, load_pronunciation_dict
 from g2pflow.converters.japanese import JapaneseKanaConverter
@@ -35,7 +35,8 @@ def test_passthrough_and_character_empty_paths():
     assert converter.find("zz abc") == (3, 6)
     assert converter.find("az") is None
     assert phones(converter.convert("abc")[0]) == [["A", "AA", "C"]]
-    assert converter.convert("b")[0].readings[0].paths == [[]]
+    assert converter.convert("b") == []
+    assert converter.convert_word("b") is None
 
 
 def test_word_boundaries_and_runs():
@@ -55,7 +56,7 @@ def test_lexicon_lookup_then_oov(dictionary):
             return [["NEW"], []]
     converter = Lexicon(str(dictionary("known\tK\nknown\tN\n")))
     assert phones(converter.convert("known")[0]) == [["K"], ["N"]]
-    assert converter.convert("missing")[0].readings[0].paths[-1] == []
+    assert phones(converter.convert("missing")[0]) == [["NEW"]]
     assert phones(Lexicon().convert("x")[0])[0] == ["NEW"]
 
 
@@ -75,15 +76,26 @@ def test_script_readings_and_paths_are_deduplicated_without_flattening():
                     [G2PGroup("ab", ["A", "B"])]]
 
     word = Script().convert("word")[0]
-    assert len(word.readings) == 2
+    assert len(word.readings) == 1
     assert [len(path) for path in word.readings[0].paths] == [2, 1]
-    assert word.readings[1].paths == [[]]
 
     class Broken(Script):
         def text_to_scripts(self, words):
             return []
     with pytest.raises(ValueError, match="word count"):
         Broken().convert("word")
+
+    class NoPaths(Script):
+        def script_to_paths(self, script):
+            return []
+    with pytest.raises(G2PConversionError, match="no candidate paths"):
+        NoPaths().convert("word")
+
+    class NoReadings(Script):
+        def text_to_scripts(self, words):
+            return [[] for _ in words]
+    with pytest.raises(G2PConversionError, match="no readings"):
+        NoReadings().convert("word")
 
 
 def test_mandarin_phrase_priority_and_alternatives(dictionary):
@@ -110,15 +122,18 @@ def test_cantonese_bundled_readings(dictionary):
 def test_kana_digraphs_katakana_and_empty_pronunciation(kana_dict):
     converter = JapaneseKanaConverter(str(kana_dict))
     words = converter.convert("キャットー゜")
-    assert [word.text for word in words] == ["キャ", "ッ", "ト", "ー", "゜"]
-    assert [phones(word) for word in words] == [[["ky", "a"]], [["cl"]], [["t", "o"]], [[]], [[]]]
+    assert [word.text for word in words] == ["キャ", "ッ", "ト"]
+    assert [phones(word) for word in words] == [[["ky", "a"]], [["cl"]], [["t", "o"]]]
+    assert converter.convert("ー゜") == []
+    assert converter.convert_word("ー゜") is None
+    assert phones(converter.convert_word("カー")) == [["k", "a"]]
     assert converter.find("wordきゃっと猫") == (4, 8)
 
 
 def test_kana_gemination_skips_empty_scripts(kana_dict):
     converter = JapaneseKanaConverter(str(kana_dict), double_written_sokuon=True)
     assert [phones(word) for word in converter.convert("っーかっ")] == [
-        [["k"]], [[]], [["k", "a"]], [["cl"]],
+        [["k"]], [["k", "a"]], [["cl"]],
     ]
     with pytest.raises(KeyError, match="not found"):
         converter.script_to_paths("not-a-script")

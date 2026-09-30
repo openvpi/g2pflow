@@ -108,6 +108,8 @@ def test_deduplicate_paths_after_special_token_removal(model_dir, monkeypatch):
     instance._encoder_session = Encoder()
     instance._decoder_session = Decoder()
     assert instance.infer_oov("a") == [[]]
+    assert instance.convert("a") == []
+    assert instance.convert_word("a") is None
 
 
 def test_pickle_drops_native_sessions(model_dir):

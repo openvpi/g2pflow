@@ -11,10 +11,16 @@ class PassthroughConverter(Converter):
     def find(self, text: str) -> tuple[int, int] | None:
         return next(word_spans(text), None)
 
-    def convert(self, text: str) -> list[G2PWord]:
-        return [G2PWord(text=t, readings=[G2PReading(paths=[
-            [G2PGroup(script=t, phonemes=[t])],
-        ])]) for t in split_words(text)]
+    def _convert(self, text: str) -> list[G2PWord]:
+        return [self._convert_word(t) for t in split_words(text)]
+
+    def accepts_word(self, text: str) -> bool:
+        return bool(text)
+
+    def _convert_word(self, text: str) -> G2PWord:
+        return G2PWord(text=text, readings=[G2PReading(paths=[
+            [G2PGroup(script=text, phonemes=[text])],
+        ])])
 
 
 @converter(id="characters", language=Language.ANY)
@@ -31,12 +37,13 @@ class CharPhonemeConverter(Converter):
                 return begin, end
         return None
 
-    def convert(self, text: str) -> list[G2PWord]:
-        result: list[G2PWord] = []
-        for token in split_words(text):
-            phonemes: list[str] = []
-            for c in token:
-                phonemes.extend(self._mapping[c])
-            path = [G2PGroup(script=token, phonemes=phonemes)] if phonemes else []
-            result.append(G2PWord(text=token, readings=[G2PReading(paths=[path])]))
-        return result
+    def _convert(self, text: str) -> list[G2PWord]:
+        return [self._convert_word(token) for token in split_words(text)]
+
+    def accepts_word(self, text: str) -> bool:
+        return bool(text) and all(c in self._mapping for c in text)
+
+    def _convert_word(self, text: str) -> G2PWord:
+        phonemes = [phone for char in text for phone in self._mapping[char]]
+        path = [G2PGroup(script=text, phonemes=phonemes)] if phonemes else []
+        return G2PWord(text=text, readings=[G2PReading(paths=[path])])
