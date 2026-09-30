@@ -3,7 +3,7 @@ from dataclasses import replace
 from .converters.base import (
     Converter, G2PConversionError, G2PWord, G2PWordBoundaryError, resolve_language,
 )
-from .pfml import parse_pfml
+from .pfml import PFMLDocument, PFMLText, parse_pfml
 from .preprocessors.base import Preprocessor
 from .registry import Language
 
@@ -20,22 +20,59 @@ class G2PPipeline:
     def convert(
         self, text: str, *, languages: list[str] | None = None,
     ) -> list[G2PWord]:
-        language_set = set(languages) if languages else None
-        active = [
-            c for c in self._converters
-            if language_set is None
-            or c.language is None
-            or c.language is Language.ANY
-            or any(ln in language_set for ln in c.language)
-        ]
-        return self._convert(text, active, languages)
+        """Convert literal text as one automatic input fragment."""
+        return self._convert_document(PFMLDocument([PFMLText(text)]), languages)
 
-    def _convert(
+    def convert_pfml(
+        self, source: str, *, languages: list[str] | None = None,
+    ) -> list[G2PWord]:
+        """Convert a PFML fragment, preserving all non-silent direct candidates.
+
+        Use an outer scope element to set a default language. Scoped languages
+        select only converters explicitly registered/configured for that
+        language. The languages filter applies to unscoped automatic text as
+        in convert(); explicit language declarations take precedence.
+        Complete direct results require neither converters nor preprocessors.
+        """
+        return self._convert_document(parse_pfml(source), languages)
+
+    def _convert_document(
+        self, document: PFMLDocument, languages: list[str] | None,
+    ) -> list[G2PWord]:
+        language_set = set(languages) if languages else None
+        result: list[G2PWord] = []
+        for part in document.parts:
+            if isinstance(part, G2PWord):
+                result.append(part)
+                continue
+            if not part.text.strip():
+                continue
+            if part.language is None:
+                active = [c for c in self._converters
+                          if language_set is None or c.language is None
+                          or c.language is Language.ANY
+                          or any(tag in language_set for tag in c.language)]
+                requested = languages
+            else:
+                active = [c for c in self._converters
+                          if isinstance(c.language, tuple)
+                          and part.language in c.language]
+                requested = [part.language]
+            if not active:
+                if part.language is not None:
+                    raise ValueError(f"No converter matches the PFML language {part.language!r}.")
+                raise ValueError("No converter matches the requested languages.")
+            if part.fixed:
+                word = self._convert_fixed(part.text, active, requested)
+                if word is not None:
+                    result.append(word)
+            else:
+                result.extend(self._convert_text(part.text, active, requested))
+        return result
+
+    def _convert_text(
         self, text: str, active: list[Converter], languages: list[str] | None,
     ) -> list[G2PWord]:
-        if not active:
-            raise ValueError("No converter matches the requested languages.")
-
         fragments = [text]
         for processor in self._preprocessors:
             fragments = processor.process(fragments)
@@ -83,54 +120,6 @@ class G2PPipeline:
                     for word in words:
                         word.language = language or None
                     result.extend(words)
-        return result
-
-    def convert_pfml(
-        self, source: str, *, languages: list[str] | None = None,
-    ) -> list[G2PWord]:
-        """Convert a PFML fragment, preserving all non-silent direct candidates.
-
-        Use an outer scope element to set a default language. Scoped languages
-        select only converters explicitly registered/configured for that
-        language. The languages filter applies to unscoped automatic text as
-        in convert(); explicit language declarations take precedence.
-        Complete direct results require neither converters nor preprocessors.
-        """
-        document = parse_pfml(source)
-        result: list[G2PWord] = []
-        for part in document.parts:
-            if isinstance(part, G2PWord):
-                result.append(part)
-                continue
-            if not part.text.strip():
-                continue
-            if part.language is None:
-                language_set = set(languages) if languages else None
-                active = [c for c in self._converters
-                          if language_set is None or c.language is None
-                          or c.language is Language.ANY
-                          or any(tag in language_set for tag in c.language)]
-                requested = languages
-            else:
-                active = [c for c in self._converters
-                          if isinstance(c.language, tuple)
-                          and part.language in c.language]
-                requested = [part.language]
-            if not active:
-                raise ValueError(f"No converter matches the PFML language {part.language!r}.")
-            if part.fixed:
-                word = self._convert_fixed(part.text, active, requested)
-                if word is None:
-                    continue
-                if part.language is not None:
-                    word.language = part.language
-                result.append(word)
-            else:
-                words = self._convert(part.text, active, requested)
-                if part.language is not None:
-                    for word in words:
-                        word.language = part.language
-                result.extend(words)
         return result
 
     def _convert_fixed(

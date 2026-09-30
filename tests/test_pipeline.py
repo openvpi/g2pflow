@@ -1,3 +1,5 @@
+from xml.sax.saxutils import escape
+
 import pytest
 
 from g2pflow import (
@@ -116,8 +118,51 @@ def test_language_filter_and_markers():
     with pytest.raises(ValueError, match="No converter"):
         pipeline.convert("x", languages=["zh"])
     with pytest.raises(ValueError, match="No converter"):
-        G2PPipeline().convert("")
+        G2PPipeline().convert("x")
     assert G2PPipeline(converters=[PassthroughConverter()]).convert("x")[0].language is Language.ANY
+
+
+@pytest.mark.parametrize("entrypoint", ["convert", "convert_pfml"])
+@pytest.mark.parametrize("text", ["", " \t\r\n"])
+def test_empty_input_needs_no_converter_or_preprocessing(entrypoint, text):
+    class Unexpected(Preprocessor):
+        def process(self, fragments):
+            raise AssertionError("empty input requires no preprocessing")
+
+    pipeline = G2PPipeline(preprocessors=[Unexpected()])
+    assert getattr(pipeline, entrypoint)(text, languages=["en"]) == []
+
+
+@pytest.mark.parametrize("languages", [None, ["en"], ["jpn"]])
+@pytest.mark.parametrize("text", ["X & <word>X</word>", " X,X! "])
+def test_plain_text_and_pfml_character_data_share_routing_and_preprocessing(text, languages):
+    calls = []
+    english = LiteralConverter("x", calls, "english")
+    english.language = ("en", "eng")
+    japanese = LiteralConverter("x", calls, "japanese")
+    japanese.language = ("ja", "jpn")
+    pipeline = G2PPipeline(
+        preprocessors=[LowercasePreprocessor(), FilterPunctuation()],
+        converters=[english, japanese, PassthroughConverter()],
+    )
+    plain_words = pipeline.convert(text, languages=languages)
+    plain_calls = calls[:]
+    calls.clear()
+    assert pipeline.convert_pfml(escape(text), languages=languages) == plain_words
+    assert calls == plain_calls
+
+
+def test_plain_text_keeps_xml_syntax_and_characters_xml_cannot_represent():
+    text = '<word language="ja">x</word>&\0\r\n'
+    pipeline = G2PPipeline(converters=[LiteralConverter(text, [])])
+    assert pipeline.convert(text)[0].text == text
+
+
+@pytest.mark.parametrize("entrypoint", ["convert", "convert_pfml"])
+def test_automatic_text_requires_an_active_converter(entrypoint):
+    pipeline = G2PPipeline()
+    with pytest.raises(ValueError, match="No converter"):
+        getattr(pipeline, entrypoint)("x")
 
 
 @pytest.mark.parametrize("tag,languages,expected", [

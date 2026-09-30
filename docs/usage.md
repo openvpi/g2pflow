@@ -45,6 +45,11 @@ take precedence. Scoped converters must declare that language;
 configure `language` on neutral dictionary/LSTM converters before using them
 inside a language scope.
 
+`convert()` treats its input as one automatic text fragment, interpreting
+characters such as `<` and `&` literally. Both entry points apply the same routing and
+preprocessing rules to automatic text. Empty or whitespace-only input returns
+`[]` without invoking preprocessors or requiring a converter.
+
 Global preprocessors transform `[text]` into fragments. Within each fragment,
 the earliest range claimed by a higher-priority converter is reserved for that
 converter. Its left remainder goes to lower priorities; its right remainder
@@ -69,7 +74,8 @@ configuration `language` overrides the registered language on that instance.
 Defaults: Mandarin `zh,zho,cmn`; Cantonese `yue`; Japanese `ja,jpn`;
 dictionary and LSTM converters are language-neutral. Specify `languages=["ja"]`
 when Chinese and Japanese converters coexist and Japanese should claim kanji.
-No active converter raises `ValueError`, including an empty converter list.
+Non-whitespace automatic input with no active converter raises `ValueError`,
+including when the converter list is empty.
 
 ## Pronunciation dictionaries
 
