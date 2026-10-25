@@ -14,8 +14,8 @@ class _FakeSegmenter:
 
     def segment(self, text):
         self.calls.append(text)
-        return [Segment(start, end, surface)
-                for start, end, surface in self.segments_by_text.get(text, [])]
+        return [Segment(*item)
+                for item in self.segments_by_text.get(text, [])]
 
 
 class _FakeRuntime:
@@ -25,11 +25,18 @@ class _FakeRuntime:
 
     def predict_words(self, text, segments, *, beam_size=16):
         self.calls.append((text, len(segments), beam_size))
-        return [{"surface": surface, "start": 0, "end": len(surface),
-                 "candidates": [{"reading": reading, "score": -float(index)}
-                                for index, reading in enumerate(
-                                    readings[:beam_size])]}
-                for surface, readings in self.words_by_text.get(text, [])]
+        words = []
+        cursor = 0
+        for surface, readings in self.words_by_text.get(text, []):
+            words.append({
+                "surface": surface, "start": cursor,
+                "end": cursor + len(surface),
+                "candidates": [{"reading": reading, "score": -float(index)}
+                               for index, reading in enumerate(
+                                   readings[:beam_size])],
+            })
+            cursor += len(surface)
+        return words
 
 
 def phones(word):
@@ -41,7 +48,7 @@ def phones(word):
 def toshi_dict(dictionary):
     return dictionary(
         "a\ta\ni\ti\nu\tu\ne\te\no\to\nzu\tz u\nshi\tsh i\n"
-        "hi\th i\nga\tg a\nne\tn e\nko\tk o\n", "toshi.txt",
+        "hi\th i\nga\tg a\nka\tk a\nne\tn e\nko\tk o\nru\tr u\n", "toshi.txt",
     )
 
 
@@ -144,20 +151,20 @@ def test_long_vowels_folded_to_match_mecab(dictionary, tmp_path):
     kyo_dict = dictionary("kyo\tk y o\nu\tu\n", "kyo.txt")
     converter = JapaneseKashiConverter(str(kyo_dict), model_path=str(model),
                                        lexicon_path=str(lexicon))
-    converter._segmenter = _FakeSegmenter({"キョウ": [(0, 3, "キョウ")]})
-    converter._runtime = _FakeRuntime({"キョウ": [("キョウ", ["きょう"])]})
-    words = converter.convert("キョウ")
+    converter._segmenter = _FakeSegmenter({"今日": [(0, 2, "今日")]})
+    converter._runtime = _FakeRuntime({"今日": [("今日", ["きょう"])]})
+    words = converter.convert("今日")
     assert len(words) == 1
     # きょう -> きょー -> kyo (ー dropped), same as MeCab's UniDic pron キョー
     assert phones(words[0]) == [["k", "y", "o"]]
 
 
-def test_unreadable_kana_falls_back_to_kana_units(kashi_converter):
-    # copy-only reading of a kana surface: split into kana units like MeCab
+def test_kana_words_use_whole_word_readings(kashi_converter):
     kashi_converter._segmenter = _FakeSegmenter({"キャット": [(0, 4, "キャット")]})
     kashi_converter._runtime = _FakeRuntime({"キャット": [("キャット", ["キャット"])]})
     words = kashi_converter.convert("キャット")
-    assert [word.text for word in words] == ["キャ", "ッ", "ト"]
+    assert [word.text for word in words] == ["キャット"]
+    assert phones(words[0]) == [["ky", "a", "cl", "t", "o"]]
 
 
 def test_unreadable_kanji_raises_like_mecab(kashi_converter):
@@ -165,6 +172,105 @@ def test_unreadable_kanji_raises_like_mecab(kashi_converter):
     kashi_converter._runtime = _FakeRuntime({"珍": [("珍", ["珍"])]})
     with pytest.raises(G2PConversionError):
         kashi_converter.convert("珍")
+
+
+def test_candidates_with_kanji_are_dropped_whole(toshi_dict, tmp_path):
+    model = tmp_path / "model.onnx"
+    lexicon = tmp_path / "lexicon.txz"
+    model.write_bytes(b"stub")
+    lexicon.write_bytes(b"stub")
+    converter = JapaneseKashiConverter(str(toshi_dict), model_path=str(model),
+                                       lexicon_path=str(lexicon))
+    converter._segmenter = _FakeSegmenter({"光る": [(0, 2, "光る")]})
+    converter._runtime = _FakeRuntime(
+        {"光る": [("光る", ["ひかる", "光る"])]})
+    words = converter.convert("光る")
+    assert len(words) == 1
+    assert len(words[0].readings) == 1  # the kanji-bearing candidate is gone
+    assert phones(words[0]) == [["h", "i", "k", "a", "r", "u"]]
+
+
+def test_unknowable_low_rank_candidates_are_skipped(dictionary, tmp_path):
+    model = tmp_path / "model.onnx"
+    lexicon = tmp_path / "lexicon.txz"
+    model.write_bytes(b"stub")
+    lexicon.write_bytes(b"stub")
+    converter = JapaneseKashiConverter(str(dictionary("hi\th i\nka\tk a\n",
+                                                    "tiny.txt")),
+                                       model_path=str(model),
+                                       lexicon_path=str(lexicon))
+    converter._segmenter = _FakeSegmenter({"光か": [(0, 2, "光か")]})
+    converter._runtime = _FakeRuntime(
+        {"光か": [("光か", ["ひか", "ぐわ"])]})
+    words = converter.convert("光か")
+    assert len(words) == 1
+    assert len(words[0].readings) == 1  # ぐわ needs a missing dict key, skipped
+    assert phones(words[0]) == [["h", "i", "k", "a"]]
+
+
+def test_kana_words_handle_small_kana(dictionary, tmp_path):
+    model = tmp_path / "model.onnx"
+    lexicon = tmp_path / "lexicon.txz"
+    model.write_bytes(b"stub")
+    lexicon.write_bytes(b"stub")
+    converter = JapaneseKashiConverter(
+        str(dictionary("ne\tn e\ne\te\n", "fallback.txt")),
+        model_path=str(model), lexicon_path=str(lexicon))
+    converter._segmenter = _FakeSegmenter({"ねぇ": [(0, 2, "ねぇ")]})
+    converter._runtime = _FakeRuntime({"ねぇ": [("ねぇ", ["ねぇ"])]})
+    words = converter.convert("ねぇ")
+    assert [word.text for word in words] == ["ねぇ"]
+    assert phones(words[0]) == [["n", "e", "e"]]
+
+
+def test_kana_particles_use_unidic_pronunciation(dictionary, tmp_path):
+    model = tmp_path / "model.onnx"
+    lexicon = tmp_path / "lexicon.txz"
+    model.write_bytes(b"stub")
+    lexicon.write_bytes(b"stub")
+    converter = JapaneseKashiConverter(
+        str(dictionary("wa\tw a\nha\th a\ne\te\nhe\th e\n", "particles.txt")),
+        model_path=str(model), lexicon_path=str(lexicon))
+    for surface, pron, expected in (
+            ("は", "ワ", [["w", "a"], ["h", "a"]]),
+            ("へ", "エ", [["e"], ["h", "e"]])):
+        converter._segmenter = _FakeSegmenter({surface: [(0, 1, surface, pron)]})
+        converter._runtime = _FakeRuntime({surface: [(surface, [surface])]})
+        words = converter.convert(surface)
+        assert [word.text for word in words] == [surface]
+        assert phones(words[0]) == expected
+
+
+def test_kana_words_keep_unidic_boundaries(dictionary, tmp_path):
+    model = tmp_path / "model.onnx"
+    lexicon = tmp_path / "lexicon.txz"
+    model.write_bytes(b"stub")
+    lexicon.write_bytes(b"stub")
+    converter = JapaneseKashiConverter(
+        str(dictionary("sa\ts a\nyo\ty o\nna\tn a\nra\tr a\n", "kana.txt")),
+        model_path=str(model), lexicon_path=str(lexicon))
+    converter._segmenter = _FakeSegmenter(
+        {"さよなら": [(0, 4, "さよなら", "サヨナラ")]})
+    converter._runtime = _FakeRuntime(
+        {"さよなら": [("さよなら", ["さよなら"])]})
+    words = converter.convert("さよなら")
+    assert [word.text for word in words] == ["さよなら"]
+    assert len(words[0].readings) == 1
+    assert phones(words[0]) == [["s", "a", "y", "o", "n", "a", "r", "a"]]
+
+
+def test_kana_word_dictionary_gap_is_a_conversion_error(dictionary, tmp_path):
+    model = tmp_path / "model.onnx"
+    lexicon = tmp_path / "lexicon.txz"
+    model.write_bytes(b"stub")
+    lexicon.write_bytes(b"stub")
+    converter = JapaneseKashiConverter(
+        str(dictionary("ne\tn e\n", "gap.txt")),
+        model_path=str(model), lexicon_path=str(lexicon))
+    converter._segmenter = _FakeSegmenter({"ねぇ": [(0, 2, "ねぇ")]})
+    converter._runtime = _FakeRuntime({"ねぇ": [("ねぇ", ["ねぇ"])]})
+    with pytest.raises(G2PConversionError):
+        converter.convert("ねぇ")
 
 
 def test_empty_reading_omits_word(kashi_converter):

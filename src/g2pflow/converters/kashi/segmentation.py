@@ -16,6 +16,7 @@ class Segment:
     start: int
     end: int
     surface: str
+    pron: str = ""
 
     @property
     def length(self) -> int:
@@ -41,8 +42,10 @@ def merge_numeral_counters(segments: list[Segment],
         if (index + 1 < len(segments) and _is_numeral_surface(current.surface)
                 and _is_counter_surface(segments[index + 1].surface)):
             following = segments[index + 1]
+            pron = (current.pron + following.pron
+                    if current.pron and following.pron else "")
             merged.append(Segment(current.start, following.end,
-                                  text[current.start:following.end]))
+                                  text[current.start:following.end], pron))
             index += 2
             continue
         merged.append(current)
@@ -88,8 +91,11 @@ class UnidicSegmenter:
             surface = str(node.surface)
             if not surface:
                 continue
+            pron = str(getattr(node.feature, "pron", "") or "")
+            if pron in ("*", "-"):
+                pron = ""
             end = cursor + len(surface)
-            segments.append(Segment(cursor, end, surface))
+            segments.append(Segment(cursor, end, surface, pron))
             cursor = end
         if cursor != len(text):
             raise ValueError(

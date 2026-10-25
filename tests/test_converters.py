@@ -227,3 +227,22 @@ def test_unsupported_kana_raises(dictionary):
     converter = JapaneseKanaConverter(str(dictionary("ka\tK A\na\tA\n")))
     with pytest.raises(KeyError):
         converter.convert("\u3097")
+
+
+def test_non_digraph_kana_tokens_split_into_dictionary_keys(dictionary):
+    path = dictionary("a\ta\ne\te\nu\tu\nne\tn e\nsa\ts a\nsu\ts u\n"
+                      "ha\th a\nwa\tw a\n")
+    converter = JapaneseKanaConverter(str(path))
+    text = "あぁねぇさぁすぅはぁゎ"
+    words = converter.convert(text)
+    assert [word.text for word in words] == list(text)
+    assert [phones(word) for word in words] == [
+        [["a"]], [["a"]], [["n", "e"]], [["e"]], [["s", "a"]], [["a"]],
+        [["s", "u"]], [["u"]], [["h", "a"]], [["a"]], [["w", "a"]],
+    ]
+
+
+def test_iteration_and_combining_marks_follow_the_previous_mora(dictionary):
+    converter = JapaneseKanaConverter(str(dictionary("ka\tk a\nga\tg a\n")))
+    assert converter.text_to_scripts(["か", "ゞ"]) == [["ka"], ["ga"]]
+    assert converter.text_to_scripts(["か", "゙"]) == [["ga"], [""]]

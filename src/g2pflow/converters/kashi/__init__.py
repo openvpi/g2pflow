@@ -134,27 +134,58 @@ class JapaneseKashiConverter(Converter):
                 paths.append(path)
         return G2PReading(paths=paths)
 
+    def _kana_readings(self, surface: str, pron: str) -> list[G2PReading]:
+        candidates = []
+        if pron and all(is_kana(ch) or ch == "ー" for ch in pron):
+            candidates.append(pron)
+        candidates.append(surface)
+        readings = []
+        seen = set()
+        for candidate in candidates:
+            try:
+                reading = self._reading(fold_notation(candidate))
+            except KeyError:
+                continue
+            key = tuple(tuple((group.script, tuple(group.phonemes))
+                              for group in path)
+                        for path in reading.paths)
+            if key not in seen:
+                seen.add(key)
+                readings.append(reading)
+        if not readings:
+            raise G2PConversionError([surface])
+        return readings
+
     def _convert(self, text: str) -> list[G2PWord]:
         if not text:
             return []
         segments = self._get_segmenter().segment(text)
+        prons = {segment.start: segment.pron for segment in segments}
         result = []
         for word in self._get_runtime().predict_words(
                 text, segments, beam_size=self._beam_size):
             surface = word["surface"]
-            if word["candidates"] and word["candidates"][0]["reading"] == surface                     and all(is_kana(ch) for ch in surface):
-                # Unreadable kana word: MeCab-style per-unit fallback.
-                result.extend(self._kana._convert(surface))
+            if all(is_kana(ch) for ch in surface):
+                # Kana words take UniDic's contextual pron (は->ワ); the
+                # literal reading stays available as a second candidate.
+                result.append(G2PWord(
+                    text=surface,
+                    readings=self._kana_readings(
+                        surface, prons.get(word["start"], ""))))
                 continue
             readings = []
             seen = set()
             for candidate in word["candidates"]:
-                kana_reading = "".join(
-                    ch for ch in candidate["reading"] if is_kana(ch) or ch in "ー"
-                )
-                if kana_reading and kana_reading not in seen:
-                    seen.add(kana_reading)
-                    readings.append(self._reading(fold_notation(kana_reading)))
+                reading = candidate["reading"]
+                if not all(is_kana(ch) or ch == "ー" for ch in reading):
+                    continue  # drop candidates still containing unresolved kanji
+                if reading in seen:
+                    continue
+                seen.add(reading)
+                try:
+                    readings.append(self._reading(fold_notation(reading)))
+                except Exception:
+                    continue  # skip candidates the Kana dictionary cannot voice
             if not readings:
                 raise G2PConversionError([surface])
             result.append(G2PWord(text=surface, readings=readings))
