@@ -40,7 +40,8 @@ def test_invalid_configuration(model, data):
 def test_builtin_components_are_discovered():
     assert set(list_converters()) == {
         "characters", "chinese-pinyin", "dictionary", "japanese-kana",
-        "japanese-mecab", "lstm", "passthrough", "yue-jyutping",
+        "japanese-kashi", "japanese-mecab", "lstm", "passthrough",
+        "yue-jyutping",
     }
     assert set(list_preprocessors()) == {
         "filter-punctuation", "lowercase", "strip-whitespace", "remove-accents",

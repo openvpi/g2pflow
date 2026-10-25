@@ -26,6 +26,7 @@ classifiers = [
 
 [project.optional-dependencies]
 ja = ["fugashi>=1.3,<2", "unidic>=1.1,<2", "filelock"]
+kashi = ["fugashi>=1.3,<2", "unidic>=1.1,<2", "numpy", "onnxruntime", "filelock"]
 lstm = ["numpy", "onnxruntime"]
 all = ["fugashi>=1.3,<2", "unidic>=1.1,<2", "filelock", "numpy", "onnxruntime"]
 dev = ["pytest", "pytest-cov", "build", "twine", "numpy"]
