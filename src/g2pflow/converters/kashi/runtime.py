@@ -14,6 +14,7 @@ except ImportError as exc:  # pragma: no cover
     ) from exc
 
 from .constants import MAX_COMPONENTS, MAX_EDGES, READING_LEN, SEQ_LEN
+from .context import build_context_metadata, char_readings_from_table
 from .decoder import decode_beam
 from .lexicon import (
     Edge,
@@ -132,6 +133,15 @@ class G2POnnxRuntime:
         self.provider_name = self.session.get_providers()[0]
         self.input_names = [i.name for i in self.session.get_inputs()]
         self._reading_cache: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+        self._char_readings: dict[str, frozenset[str]] | None = None
+        self._decomposition_cache: dict[tuple[str, str],
+                                        tuple[tuple[int, str], ...]] = {}
+
+    def _context_metadata(self, segments) -> dict:
+        if self._char_readings is None:
+            self._char_readings = char_readings_from_table(self.table)
+        return build_context_metadata(
+            segments, self._char_readings, self._decomposition_cache)
 
     def _features(self, text: str):
         unk = self.unk_id
@@ -209,7 +219,8 @@ class G2POnnxRuntime:
         text = normalize_surface(text)
         if not text:
             return []
-        global_edges = build_edges(text, self.lexicon)
+        global_edges = build_edges(
+            text, self.lexicon, self._context_metadata(segments))
         windows = safe_windows(text, global_edges)
         scored = []
         for wstart, wend in windows:

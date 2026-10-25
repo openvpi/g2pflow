@@ -315,3 +315,72 @@ def test_pipeline_config_integration(kana_dict, tmp_path):
     pipeline._converters[0]._runtime = _FakeRuntime({"ネコが": [("ネコ", ["ねこ"]), ("が", ["が"])]})
     words = pipeline.convert("ネコが", languages=["ja"])
     assert [word.text for word in words] == ["ネコ", "が"]
+
+
+# ------------------------------------------------- context metadata
+
+
+def test_decompose_reading_splits_compound():
+    from g2pflow.converters.kashi.context import decompose_reading
+    chars = {"汽": frozenset({"き"}), "船": frozenset({"せん"})}
+    assert decompose_reading("汽船", "きせん", chars) == ((0, "き"), (1, "せん"))
+    assert decompose_reading("汽船", "ふね", chars) == ()
+
+
+def test_decompose_reading_drops_ambiguous_positions():
+    from g2pflow.converters.kashi.context import decompose_reading
+    chars = {"灯": frozenset({"いた", "い"}), "火": frozenset({"く", "たく"}),
+             "刀": frozenset({"し"})}
+    # いたくし = (いた,く,し) or (い,たく,し): only 刀 is unambiguous.
+    assert decompose_reading("灯火刀", "いたくし", chars) == ((2, "し"),)
+
+
+def test_decompose_reading_okurigana_consumes_itself():
+    from g2pflow.converters.kashi.context import decompose_reading
+    chars = {"泳": frozenset({"およ"})}
+    assert decompose_reading("泳いで", "およいで", chars) == ((0, "およ"),)
+
+
+def test_build_context_metadata_word_and_char_keys():
+    from g2pflow.converters.kashi.context import (CONTEXT_METADATA,
+                                                  build_context_metadata)
+    chars = {"汽": frozenset({"き"}), "船": frozenset({"せん"})}
+    segments = [Segment(3, 5, "汽船", "", "キセン"),
+                Segment(5, 6, "の", "", "ノ")]
+    meta = build_context_metadata(segments, chars)
+    assert meta == {
+        (3, 5, "きせん"): CONTEXT_METADATA,
+        (3, 4, "き"): CONTEXT_METADATA,
+        (4, 5, "せん"): CONTEXT_METADATA,
+    }
+
+
+def test_build_context_metadata_ignores_kana_only_and_kanaless():
+    from g2pflow.converters.kashi.context import build_context_metadata
+    chars = {"船": frozenset({"せん"})}
+    assert build_context_metadata([Segment(0, 3, "さよなら")], chars) == {}
+    assert build_context_metadata(
+        [Segment(0, 2, "汽船", "", "")], chars) == {}
+
+
+def test_build_edges_applies_context_metadata_before_variants():
+    from g2pflow.converters.kashi.context import CONTEXT_METADATA
+    from g2pflow.converters.kashi.lexicon import UnifiedLexicon, build_edges
+    pack = UnifiedLexicon({
+        "済み": (("すみ", "yomogi_dict", 0.6, 0.75),),
+        "あ": (("あ", "copy", -1.0, 0.0),),
+    })
+    meta = {(1, 3, "すみ"): CONTEXT_METADATA}
+    edges = {(e.start, e.end, e.reading): e
+             for e in build_edges("あ済み", pack, meta)}
+    word = edges[(1, 3, "すみ")]
+    assert (word.source, word.prior, word.confidence) == \
+        ("pyopenjtalk", 0.75, 0.9)
+    variant = edges[(1, 3, "ずみ")]
+    # the rendaku variant inherits the contextual metadata
+    assert variant.source == "pyopenjtalk"
+    assert variant.prior == pytest.approx(0.35)
+    assert variant.confidence == pytest.approx(0.765)
+    plain = {(e.start, e.end, e.reading): e
+             for e in build_edges("あ済み", pack)}
+    assert plain[(1, 3, "すみ")].source == "yomogi_dict"

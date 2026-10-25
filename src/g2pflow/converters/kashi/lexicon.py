@@ -348,9 +348,17 @@ def prune(edges: list[Edge], text: str) -> list[Edge]:
     return keep
 
 
-def build_edges(text: str, lexicon: UnifiedLexicon) -> list[Edge]:
+def build_edges(text: str, lexicon: UnifiedLexicon,
+                context_meta: dict | None = None) -> list[Edge]:
     text = normalize_surface(text)
     edges = lexicon.build(text)
+    if context_meta:
+        # Applied before variant/stem derivation so derived edges inherit
+        # the contextual metadata, mirroring the training-time provider.
+        for edge in edges:
+            override = context_meta.get((edge.start, edge.end, edge.reading))
+            if override is not None:
+                edge.source, edge.prior, edge.confidence = override
     edges = expand_word_variants(edges, text)
     unique: dict[tuple, Edge] = {}
     for edge in edges:
