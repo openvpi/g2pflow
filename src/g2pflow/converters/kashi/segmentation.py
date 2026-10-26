@@ -40,7 +40,9 @@ def merge_numeral_counters(segments: list[Segment],
     index = 0
     while index < len(segments):
         current = segments[index]
-        if (index + 1 < len(segments) and _is_numeral_surface(current.surface)
+        if (index + 1 < len(segments)
+                and current.end == segments[index + 1].start
+                and _is_numeral_surface(current.surface)
                 and _is_counter_surface(segments[index + 1].surface)):
             following = segments[index + 1]
             pron = (current.pron + following.pron
@@ -88,6 +90,20 @@ class UnidicSegmenter:
                 f'-r "{(dicdir / "mecabrc").as_posix()}" '
                 f'-d "{dicdir.as_posix()}"')
 
+    def whole_word_readings(self, text: str, nbest: int = 8) -> list[str]:
+        """UniDic prons for analyses that keep ``text`` as a single word."""
+        readings: list[str] = []
+        seen: set[str] = set()
+        for nodes in self.tagger.nbestToNodeList(text, nbest):
+            if len(nodes) != 1 or str(nodes[0].surface) != text:
+                continue
+            pron = str(getattr(nodes[0].feature, "pron", "") or "")
+            if not pron or pron in ("*", "-") or pron in seen:
+                continue
+            seen.add(pron)
+            readings.append(pron)
+        return readings
+
     def segment(self, text: str) -> list[Segment]:
         segments: list[Segment] = []
         cursor = 0
@@ -95,16 +111,22 @@ class UnidicSegmenter:
             surface = str(node.surface)
             if not surface:
                 continue
+            start = text.find(surface, cursor)
+            if start < 0:
+                raise ValueError(
+                    f"UniDic surface {surface!r} is not present in the input")
+            if start > cursor:
+                # MeCab drops whitespace nodes; keep each gap as its own segment.
+                segments.append(Segment(cursor, start, text[cursor:start]))
             pron = str(getattr(node.feature, "pron", "") or "")
             if pron in ("*", "-"):
                 pron = ""
             kana = str(getattr(node.feature, "kana", "") or "")
             if kana in ("*", "-"):
                 kana = ""
-            end = cursor + len(surface)
-            segments.append(Segment(cursor, end, surface, pron, kana))
+            end = start + len(surface)
+            segments.append(Segment(start, end, surface, pron, kana))
             cursor = end
-        if cursor != len(text):
-            raise ValueError(
-                "UniDic surfaces do not concatenate to the input text")
+        if cursor < len(text):
+            segments.append(Segment(cursor, len(text), text[cursor:]))
         return merge_numeral_counters(segments, text)

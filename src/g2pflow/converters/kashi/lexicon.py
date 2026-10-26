@@ -215,10 +215,10 @@ def filter_truncated_okurigana(edges: list[Edge], text: str) -> list[Edge]:
 
 
 def filter_rendaku_traps(edges: list[Edge]) -> list[Edge]:
+    """Keep unvoiced rendaku siblings, down-weighted rather than deleted."""
     by_span: dict[tuple[int, int], list[int]] = {}
     for index, edge in enumerate(edges):
         by_span.setdefault((edge.start, edge.end), []).append(index)
-    drop: set[int] = set()
     for indices in by_span.values():
         readings = {edges[i].reading for i in indices
                     if edges[i].source in _WORD_SOURCES}
@@ -232,11 +232,9 @@ def filter_rendaku_traps(edges: list[Edge]) -> list[Edge]:
             for k in range(1, len(reading)):
                 voiced = _DAKUTEN.get(reading[k]) or _HANDAKU.get(reading[k])
                 if voiced and reading[:k] + voiced + reading[k + 1:] in readings:
-                    drop.add(i)
+                    edge.prior = max(0.0, edge.prior - 0.2)
                     break
-    if not drop:
-        return edges
-    return [edge for index, edge in enumerate(edges) if index not in drop]
+    return edges
 
 
 def _has_complete_path(edges: list[Edge], length: int) -> bool:
@@ -307,6 +305,23 @@ def _prune_key(edge: Edge):
             edge.reading, edge.source)
 
 
+def enforce_edge_cap(edges: list[Edge]) -> list[Edge]:
+    """Cap the graph after additive derivation, keeping COPY edges.
+
+    Text longer than MAX_EDGES characters must be built per window.
+    """
+    if len(edges) <= MAX_EDGES:
+        return edges
+    copies = [edge for edge in edges if edge.source == "copy"]
+    others = [edge for edge in edges if edge.source != "copy"]
+    if len(copies) > MAX_EDGES:
+        raise ValueError(
+            f"{len(copies)} copy edges exceed the candidate cap ({MAX_EDGES}); "
+            "build the graph per window instead of on the full text")
+    budget = max(0, MAX_EDGES - len(copies))
+    return copies + sorted(others, key=_prune_key)[:budget]
+
+
 def prune(edges: list[Edge], text: str) -> list[Edge]:
     mandatory = {(e.start, e.end, e.reading, e.source)
                  for e in copy_edges(text)}
@@ -348,17 +363,9 @@ def prune(edges: list[Edge], text: str) -> list[Edge]:
     return keep
 
 
-def build_edges(text: str, lexicon: UnifiedLexicon,
-                context_meta: dict | None = None) -> list[Edge]:
+def build_edges(text: str, lexicon: UnifiedLexicon) -> list[Edge]:
     text = normalize_surface(text)
     edges = lexicon.build(text)
-    if context_meta:
-        # Applied before variant/stem derivation so derived edges inherit
-        # the contextual metadata, mirroring the training-time provider.
-        for edge in edges:
-            override = context_meta.get((edge.start, edge.end, edge.reading))
-            if override is not None:
-                edge.source, edge.prior, edge.confidence = override
     edges = expand_word_variants(edges, text)
     unique: dict[tuple, Edge] = {}
     for edge in edges:
@@ -371,5 +378,6 @@ def build_edges(text: str, lexicon: UnifiedLexicon,
     result = filter_rendaku_traps(result)
     result = repair_complete_path(result, text)
     result = derive_okurigana_stems(result, text)
+    result = enforce_edge_cap(result)
     return sorted(result,
                   key=lambda e: (e.start, e.end, -e.prior, e.reading, e.source))

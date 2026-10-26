@@ -17,6 +17,9 @@ class _FakeSegmenter:
         return [Segment(*item)
                 for item in self.segments_by_text.get(text, [])]
 
+    def whole_word_readings(self, text, nbest=8):
+        return []
+
 
 class _FakeRuntime:
     def __init__(self, words_by_text):
@@ -63,8 +66,14 @@ def kashi_converter(kana_dict, tmp_path):
 
 
 def test_release_urls():
-    assert MODEL_URL.endswith("v1.0.0/model.onnx")
-    assert LEXICON_URL.endswith("v1.0.0/lexicon.txz")
+    assert MODEL_URL.endswith("v1.1.0/model.onnx")
+    assert LEXICON_URL.endswith("v1.1.0/lexicon.txz")
+
+
+def test_default_download_cache_is_versioned(kana_dict, tmp_path):
+    converter = JapaneseKashiConverter(str(kana_dict), cache_dir=str(tmp_path))
+    assert converter._model_path == tmp_path / "v1.1.0" / "model.onnx"
+    assert converter._lexicon_path == tmp_path / "v1.1.0" / "lexicon.txz"
 
 
 def test_find_claims_japanese_runs_only(kashi_converter):
@@ -143,7 +152,7 @@ def test_beam_size_is_configurable(toshi_dict, tmp_path):
     assert fake_rt.calls == [("東", 1, 4)]
 
 
-def test_long_vowels_folded_to_match_mecab(dictionary, tmp_path):
+def test_long_vowels_follow_unidic_pron_like_mecab(dictionary, tmp_path):
     model = tmp_path / "model.onnx"
     lexicon = tmp_path / "lexicon.txz"
     model.write_bytes(b"stub")
@@ -151,11 +160,11 @@ def test_long_vowels_folded_to_match_mecab(dictionary, tmp_path):
     kyo_dict = dictionary("kyo\tk y o\nu\tu\n", "kyo.txt")
     converter = JapaneseKashiConverter(str(kyo_dict), model_path=str(model),
                                        lexicon_path=str(lexicon))
-    converter._segmenter = _FakeSegmenter({"今日": [(0, 2, "今日")]})
+    converter._segmenter = _FakeSegmenter(
+        {"今日": [(0, 2, "今日", "キョー", "キョウ")]})
     converter._runtime = _FakeRuntime({"今日": [("今日", ["きょう"])]})
     words = converter.convert("今日")
     assert len(words) == 1
-    # きょう -> きょー -> kyo (ー dropped), same as MeCab's UniDic pron キョー
     assert phones(words[0]) == [["k", "y", "o"]]
 
 
@@ -296,6 +305,136 @@ def test_real_model_end_to_end(kana_dict, tmp_path):
     assert words and words[0].readings
 
 
+def test_kanji_candidates_match_unidic_long_vowels_only(dictionary, tmp_path):
+    model = tmp_path / "model.onnx"
+    lexicon = tmp_path / "lexicon.txz"
+    model.write_bytes(b"stub")
+    lexicon.write_bytes(b"stub")
+    table = dictionary("ta\tt a\nme\tm e\ni\ti\nki\tk i\nbi\tb i\n",
+                       "meta.txt")
+    converter = JapaneseKashiConverter(str(table), model_path=str(model),
+                                       lexicon_path=str(lexicon))
+    converter._segmenter = _FakeSegmenter(
+        {"ため息": [(0, 3, "ため息", "タメイキ", "タメイキ")]})
+    converter._runtime = _FakeRuntime(
+        {"ため息": [("ため息", ["ためいき", "たび"])]})
+    words = converter.convert("ため息")
+    assert phones(words[0]) == [["t", "a", "m", "e", "i", "k", "i"],
+                                ["t", "a", "b", "i"]]
+
+
+def test_non_matching_candidate_is_not_folded(dictionary, tmp_path):
+    model = tmp_path / "model.onnx"
+    lexicon = tmp_path / "lexicon.txz"
+    model.write_bytes(b"stub")
+    lexicon.write_bytes(b"stub")
+    table = dictionary("ka\tk a\nku\tk u\nme\tm e\n", "meta2.txt")
+    converter = JapaneseKashiConverter(str(table), model_path=str(model),
+                                       lexicon_path=str(lexicon))
+    converter._segmenter = _FakeSegmenter(
+        {"革命": [(0, 2, "革命", "カクメー", "カクメイ")]})
+    converter._runtime = _FakeRuntime(
+        {"革命": [("革命", ["かくめい"])]})
+    words = converter.convert("革命")
+    assert phones(words[0]) == [["k", "a", "k", "u", "m", "e"]]
+
+
+def test_windows_follow_segment_boundaries():
+    from g2pflow.converters.kashi.runtime import windows_from_segments
+    segments = [Segment(i * 10, (i + 1) * 10, "x" * 10) for i in range(20)]
+    windows = windows_from_segments(segments, 200)
+    assert windows[0][0] == 0 and windows[-1][1] == 200
+    for start, end in windows:
+        assert 0 < end - start <= 64
+    assert all(any(start <= s.start and s.end <= end for start, end in windows)
+               for s in segments)
+
+
+def test_enforce_edge_cap_keeps_copies_and_bounds_others():
+    from g2pflow.converters.kashi.lexicon import Edge, enforce_edge_cap
+    edges = [Edge(i, i + 1, "x", "x", "copy", -1.0) for i in range(40)]
+    edges += [Edge(0, 1, "x", f"r{i}", "jmdict", 0.5) for i in range(400)]
+    capped = enforce_edge_cap(edges)
+    assert len(capped) == 256
+    assert sum(edge.source == "copy" for edge in capped) == 40
+
+
+def test_long_text_is_built_per_window_without_edge_cap_error():
+    from g2pflow.converters.kashi.lexicon import UnifiedLexicon
+    from g2pflow.converters.kashi.runtime import G2POnnxRuntime
+    text = "明日は晴れです" * 20
+    pack = {"明": (("あ", "jmdict", 0.5, 0.5),),
+            "日": (("ひ", "jmdict", 0.5, 0.5),)}
+    runtime = object.__new__(G2POnnxRuntime)
+    runtime.lexicon = UnifiedLexicon(pack, use_copy=False)
+    runtime._char_readings = {}
+    runtime._decomposition_cache = {}
+    runtime.score = lambda local_text, edges: [0.0] * len(edges)
+    segments = [Segment(i, i + 1, char) for i, char in enumerate(text)]
+    windows = len(__import__(
+        "g2pflow.converters.kashi.runtime", fromlist=["windows_from_segments"]
+    ).windows_from_segments(segments, len(text)))
+    words = runtime.predict_words(text, segments, beam_size=4)
+    assert windows > 1
+    assert len(words) == len(text)
+
+
+def test_rendaku_trap_is_kept_and_downweighted():
+    from g2pflow.converters.kashi.lexicon import UnifiedLexicon, build_edges
+    pack = {
+        "中島": (("なかじま", "yomogi_dict", 0.6, 0.75),
+                ("なかしま", "yomogi_dict", 0.6, 0.75)),
+        "あ": (("あ", "copy", -1.0, 0.0),),
+    }
+    edges = {(edge.start, edge.end, edge.reading): edge
+             for edge in build_edges("あ中島", UnifiedLexicon(pack))}
+    unvoiced = edges[(1, 3, "なかしま")]
+    voiced = edges[(1, 3, "なかじま")]
+    assert unvoiced.prior == pytest.approx(0.4)
+    assert voiced.prior == pytest.approx(0.6)
+
+
+def test_convert_word_returns_one_fixed_word(dictionary, tmp_path):
+    model = tmp_path / "model.onnx"
+    lexicon = tmp_path / "lexicon.txz"
+    model.write_bytes(b"stub")
+    lexicon.write_bytes(b"stub")
+    table = dictionary(
+        "to\tt o\nu\tu\nkyo\tky o\nta\tt a\n", "fixed.txt")
+    converter = JapaneseKashiConverter(str(table), model_path=str(model),
+                                       lexicon_path=str(lexicon))
+    converter._segmenter = _FakeSegmenter({"東京都": []})
+    converter._runtime = _FakeRuntime(
+        {"東京都": [("東京都", ["とうきょうと"])]})
+    word = converter.convert_word("東京都")
+    assert word is not None and word.text == "東京都"
+    assert phones(word) == [["t", "o", "u", "ky", "o", "u", "t", "o"]]
+
+
+def test_getstate_drops_native_handles(kashi_converter):
+    kashi_converter._runtime = object()
+    kashi_converter._segmenter = object()
+    state = kashi_converter.__getstate__()
+    assert state["_runtime"] is None
+    assert state["_segmenter"] is None
+
+
+def test_combining_mark_keeps_raw_offsets(dictionary, tmp_path):
+    model = tmp_path / "model.onnx"
+    lexicon = tmp_path / "lexicon.txz"
+    model.write_bytes(b"stub")
+    lexicon.write_bytes(b"stub")
+    table = dictionary("ga\tg a\ncl\tcl\nko\tk o\nu\tu\n", "norm.txt")
+    converter = JapaneseKashiConverter(str(table), model_path=str(model),
+                                       lexicon_path=str(lexicon))
+    converter._segmenter = _FakeSegmenter(
+        {"が学校": [(0, 1, "が"), (1, 3, "学校")]})
+    converter._runtime = _FakeRuntime(
+        {"が学校": [("が", ["が"]), ("学校", ["がっこう"])]})
+    words = converter.convert("か\u3099学校")
+    assert [word.text for word in words] == ["か\u3099", "学校"]
+
+
 def test_pipeline_config_integration(kana_dict, tmp_path):
     model = tmp_path / "model.onnx"
     lexicon = tmp_path / "lexicon.txz"
@@ -317,70 +456,54 @@ def test_pipeline_config_integration(kana_dict, tmp_path):
     assert [word.text for word in words] == ["ネコ", "が"]
 
 
-# ------------------------------------------------- context metadata
+def test_merge_numeral_counters_does_not_cross_a_gap():
+    from g2pflow.converters.kashi.segmentation import merge_numeral_counters
+    text = "3 人"
+    segments = [Segment(0, 1, "3"), Segment(2, 3, "人")]
+    assert [segment.surface for segment in
+            merge_numeral_counters(segments, text)] == ["3", "人"]
 
 
-def test_decompose_reading_splits_compound():
-    from g2pflow.converters.kashi.context import decompose_reading
-    chars = {"汽": frozenset({"き"}), "船": frozenset({"せん"})}
-    assert decompose_reading("汽船", "きせん", chars) == ((0, "き"), (1, "せん"))
-    assert decompose_reading("汽船", "ふね", chars) == ()
+def test_windows_from_segments_chunks_a_trailing_gap():
+    from g2pflow.converters.kashi.runtime import windows_from_segments
+    segments = [Segment(0, 70, "x" * 70)]
+    windows = windows_from_segments(segments, 200)
+    assert windows[0][0] == 0 and windows[-1][1] == 200
+    assert all(0 < end - start <= 64 for start, end in windows)
 
 
-def test_decompose_reading_drops_ambiguous_positions():
-    from g2pflow.converters.kashi.context import decompose_reading
-    chars = {"灯": frozenset({"いた", "い"}), "火": frozenset({"く", "たく"}),
-             "刀": frozenset({"し"})}
-    # いたくし = (いた,く,し) or (い,たく,し): only 刀 is unambiguous.
-    assert decompose_reading("灯火刀", "いたくし", chars) == ((2, "し"),)
+def test_enforce_edge_cap_rejects_more_copies_than_cap():
+    from g2pflow.converters.kashi.lexicon import Edge, enforce_edge_cap
+    edges = [Edge(i, i + 1, "x", "x", "copy", -1.0) for i in range(300)]
+    with pytest.raises(ValueError, match="copy edges exceed"):
+        enforce_edge_cap(edges)
 
 
-def test_decompose_reading_okurigana_consumes_itself():
-    from g2pflow.converters.kashi.context import decompose_reading
-    chars = {"泳": frozenset({"およ"})}
-    assert decompose_reading("泳いで", "およいで", chars) == ((0, "およ"),)
+def test_predict_words_skips_whitespace_segments():
+    from g2pflow.converters.kashi.lexicon import UnifiedLexicon
+    from g2pflow.converters.kashi.runtime import G2POnnxRuntime
+    runtime = object.__new__(G2POnnxRuntime)
+    runtime.lexicon = UnifiedLexicon({}, use_copy=False)
+    runtime._char_readings = {}
+    runtime._decomposition_cache = {}
+    runtime.score = lambda local_text, edges: [0.0] * len(edges)
+    segments = [Segment(0, 1, "あ"), Segment(1, 2, " "),
+                Segment(2, 3, "い")]
+    words = runtime.predict_words("あ い", segments, beam_size=4)
+    assert [word["surface"] for word in words] == ["あ", "い"]
+    assert [(word["start"], word["end"]) for word in words] == [(0, 1), (2, 3)]
 
 
-def test_build_context_metadata_word_and_char_keys():
-    from g2pflow.converters.kashi.context import (CONTEXT_METADATA,
-                                                  build_context_metadata)
-    chars = {"汽": frozenset({"き"}), "船": frozenset({"せん"})}
-    segments = [Segment(3, 5, "汽船", "", "キセン"),
-                Segment(5, 6, "の", "", "ノ")]
-    meta = build_context_metadata(segments, chars)
-    assert meta == {
-        (3, 5, "きせん"): CONTEXT_METADATA,
-        (3, 4, "き"): CONTEXT_METADATA,
-        (4, 5, "せん"): CONTEXT_METADATA,
-    }
-
-
-def test_build_context_metadata_ignores_kana_only_and_kanaless():
-    from g2pflow.converters.kashi.context import build_context_metadata
-    chars = {"船": frozenset({"せん"})}
-    assert build_context_metadata([Segment(0, 3, "さよなら")], chars) == {}
-    assert build_context_metadata(
-        [Segment(0, 2, "汽船", "", "")], chars) == {}
-
-
-def test_build_edges_applies_context_metadata_before_variants():
-    from g2pflow.converters.kashi.context import CONTEXT_METADATA
-    from g2pflow.converters.kashi.lexicon import UnifiedLexicon, build_edges
-    pack = UnifiedLexicon({
-        "済み": (("すみ", "yomogi_dict", 0.6, 0.75),),
-        "あ": (("あ", "copy", -1.0, 0.0),),
-    })
-    meta = {(1, 3, "すみ"): CONTEXT_METADATA}
-    edges = {(e.start, e.end, e.reading): e
-             for e in build_edges("あ済み", pack, meta)}
-    word = edges[(1, 3, "すみ")]
-    assert (word.source, word.prior, word.confidence) == \
-        ("pyopenjtalk", 0.75, 0.9)
-    variant = edges[(1, 3, "ずみ")]
-    # the rendaku variant inherits the contextual metadata
-    assert variant.source == "pyopenjtalk"
-    assert variant.prior == pytest.approx(0.35)
-    assert variant.confidence == pytest.approx(0.765)
-    plain = {(e.start, e.end, e.reading): e
-             for e in build_edges("あ済み", pack)}
-    assert plain[(1, 3, "すみ")].source == "yomogi_dict"
+def test_segment_longer_than_window_is_decoded_per_chunk():
+    from g2pflow.converters.kashi.lexicon import UnifiedLexicon
+    from g2pflow.converters.kashi.runtime import G2POnnxRuntime
+    text = "あ" * 80
+    runtime = object.__new__(G2POnnxRuntime)
+    runtime.lexicon = UnifiedLexicon({}, use_copy=False)
+    runtime._char_readings = {}
+    runtime._decomposition_cache = {}
+    runtime.score = lambda local_text, edges: [0.0] * len(edges)
+    words = runtime.predict_words(text, [Segment(0, 80, text)], beam_size=4)
+    assert len(words) == 1
+    assert words[0]["candidates"]
+    assert words[0]["candidates"][0]["reading"] == text

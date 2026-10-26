@@ -7,19 +7,22 @@ from __future__ import annotations
 
 import os
 import shutil
+import unicodedata
 import urllib.request
 from itertools import product
 from pathlib import Path
 
 from ...registry import converter
-from ..base import Converter, G2PConversionError, G2PReading, G2PWord
+from ..base import (Converter, G2PConversionError, G2PReading, G2PWord,
+                    compose_word)
 from ..japanese import JapaneseKanaConverter, _is_japanese_char
-from .notation import fold_notation
+from .lexicon import hira, normalize_surface
 from .segmentation import UnidicSegmenter
 from ..text import find_run, is_kana
 
+_RELEASE_TAG = "v1.1.0"
 _RELEASE_BASE = ("https://github.com/Xiantaidu/kashi-g2p/releases/"
-                 "download/v1.0.0")
+                 f"download/{_RELEASE_TAG}")
 MODEL_URL = f"{_RELEASE_BASE}/model.onnx"
 LEXICON_URL = f"{_RELEASE_BASE}/lexicon.txz"
 
@@ -54,6 +57,33 @@ def _download(url: str, path: Path, *, attempts: int = 3) -> None:
     raise IOError(f"could not download {url}") from last_error
 
 
+def _kana_only(text: str) -> bool:
+    return bool(text) and all(is_kana(ch) or ch == "ー" for ch in text)
+
+
+def _normalize_with_offsets(text: str) -> tuple[str, list[int], list[int]]:
+    """NFKC the run and remember each normalized char's source span.
+
+    Combining marks stay with their base character.
+    """
+    normalized: list[str] = []
+    starts: list[int] = []
+    ends: list[int] = []
+    index = 0
+    while index < len(text):
+        end = index + 1
+        while end < len(text) and (
+                unicodedata.combining(text[end])
+                or text[end] in "\u3099\u309a"):
+            end += 1
+        for char in normalize_surface(text[index:end]):
+            normalized.append(char)
+            starts.append(index)
+            ends.append(end)
+        index = end
+    return "".join(normalized), starts, ends
+
+
 @converter(id="japanese-kashi", language="ja,jpn")
 class JapaneseKashiConverter(Converter):
     """Japanese G2P readings via the kashi-g2p ONNX model.
@@ -70,6 +100,7 @@ class JapaneseKashiConverter(Converter):
                  unidic_dir: str | None = None) -> None:
         self._kana = JapaneseKanaConverter(dict_path=dict_path)
         cache = Path(cache_dir) if cache_dir else _default_cache_dir() / "kashi"
+        cache = cache / _RELEASE_TAG
         self._model_path = Path(model_path) if model_path else cache / "model.onnx"
         self._lexicon_path = Path(lexicon_path) if lexicon_path else cache / "lexicon.txz"
         self._prefer_dml = prefer_dml
@@ -136,14 +167,14 @@ class JapaneseKashiConverter(Converter):
 
     def _kana_readings(self, surface: str, pron: str) -> list[G2PReading]:
         candidates = []
-        if pron and all(is_kana(ch) or ch == "ー" for ch in pron):
+        if _kana_only(pron):
             candidates.append(pron)
         candidates.append(surface)
         readings = []
         seen = set()
         for candidate in candidates:
             try:
-                reading = self._reading(fold_notation(candidate))
+                reading = self._reading(candidate)
             except KeyError:
                 continue
             key = tuple(tuple((group.script, tuple(group.phonemes))
@@ -156,37 +187,94 @@ class JapaneseKashiConverter(Converter):
             raise G2PConversionError([surface])
         return readings
 
+    def __getstate__(self) -> dict:
+        # Native ONNX/fugashi handles are rebuilt lazily after unpickling.
+        state = dict(self.__dict__)
+        state["_runtime"] = None
+        state["_segmenter"] = None
+        return state
+
+    def _kanji_readings(self, surface: str, candidates: list[dict],
+                        kana: str, pron: str) -> list[G2PReading]:
+        """Model candidates converted like japanese-mecab.
+
+        A candidate matching UniDic's kana uses UniDic's pron; others are kept
+        verbatim.
+        """
+        readings = []
+        seen = set()
+        for candidate in candidates:
+            reading = candidate["reading"]
+            if not _kana_only(reading):
+                continue
+            if kana and pron and _kana_only(pron) \
+                    and hira(reading) == hira(kana):
+                reading = pron
+            if reading in seen:
+                continue
+            seen.add(reading)
+            try:
+                readings.append(self._reading(reading))
+            except Exception:
+                continue
+        if not readings:
+            raise G2PConversionError([surface])
+        return readings
+
     def _convert(self, text: str) -> list[G2PWord]:
         if not text:
             return []
-        segments = self._get_segmenter().segment(text)
-        prons = {segment.start: segment.pron for segment in segments}
+        normalized, raw_starts, raw_ends = _normalize_with_offsets(text)
+        if not normalized:
+            return []
+        segments = self._get_segmenter().segment(normalized)
+        info = {segment.start: segment for segment in segments}
         result = []
+        last_raw_end = 0
         for word in self._get_runtime().predict_words(
-                text, segments, beam_size=self._beam_size):
+                normalized, segments, beam_size=self._beam_size):
+            start, end = word["start"], word["end"]
+            raw_start = raw_starts[start]
+            raw_end = raw_ends[end - 1]
+            if raw_start < last_raw_end:
+                # Keep normalized text when one source char became several.
+                surface_text = normalized[start:end]
+            else:
+                surface_text = text[raw_start:raw_end]
+                last_raw_end = raw_end
+            segment = info.get(start)
             surface = word["surface"]
             if all(is_kana(ch) for ch in surface):
                 # Kana words take UniDic's contextual pron (は->ワ); the
                 # literal reading stays available as a second candidate.
                 result.append(G2PWord(
-                    text=surface,
+                    text=surface_text,
                     readings=self._kana_readings(
-                        surface, prons.get(word["start"], ""))))
+                        surface, segment.pron if segment else "")))
                 continue
-            readings = []
-            seen = set()
-            for candidate in word["candidates"]:
-                reading = candidate["reading"]
-                if not all(is_kana(ch) or ch == "ー" for ch in reading):
-                    continue  # drop candidates still containing unresolved kanji
-                if reading in seen:
-                    continue
-                seen.add(reading)
-                try:
-                    readings.append(self._reading(fold_notation(reading)))
-                except Exception:
-                    continue  # skip candidates the Kana dictionary cannot voice
-            if not readings:
-                raise G2PConversionError([surface])
-            result.append(G2PWord(text=surface, readings=readings))
+            result.append(G2PWord(
+                text=surface_text,
+                readings=self._kanji_readings(
+                    surface, word["candidates"],
+                    segment.kana if segment else "",
+                    segment.pron if segment else "")))
         return result
+
+    def _convert_word(self, text: str) -> G2PWord | None:
+        """Convert a caller-fixed word as one unit, like japanese-mecab."""
+        if not text:
+            return None
+        normalized, _starts, _ends = _normalize_with_offsets(text)
+        if not normalized:
+            return None
+        prons = self._get_segmenter().whole_word_readings(normalized)
+        readings = []
+        for pron in prons:
+            try:
+                readings.append(self._reading(pron))
+            except KeyError:
+                continue
+        if not readings:
+            # Same fallback as japanese-mecab when no whole word exists.
+            return compose_word(text, self._convert(normalized))
+        return G2PWord(text=text, readings=readings)

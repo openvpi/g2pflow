@@ -1,6 +1,7 @@
 """ONNX scoring and decoding runtime for kashi-g2p."""
 
 import lzma
+from itertools import product
 from pathlib import Path
 
 import numpy as np
@@ -14,7 +15,6 @@ except ImportError as exc:  # pragma: no cover
     ) from exc
 
 from .constants import MAX_COMPONENTS, MAX_EDGES, READING_LEN, SEQ_LEN
-from .context import build_context_metadata, char_readings_from_table
 from .decoder import decode_beam
 from .lexicon import (
     Edge,
@@ -32,6 +32,49 @@ _BUNDLE_END = "##end"
 
 
 # ---------------------------------------------------------------- windows
+
+
+def windows_from_segments(segments, length: int) -> list[tuple[int, int]]:
+    """Split ``[0, length)`` at fixed-word boundaries into <=SEQ_LEN windows.
+
+    Window edges are segment boundaries whenever possible, so no fixed word is
+    bisected.  A segment longer than the model window is split and decoded
+    chunk by chunk.
+    """
+    if length <= 0:
+        return []
+    if length <= SEQ_LEN:
+        return [(0, length)]
+    windows: list[tuple[int, int]] = []
+    start = 0
+    for segment in segments:
+        seg_start, seg_end = int(segment.start), int(segment.end)
+        if seg_end <= start:
+            continue
+        if seg_end - start <= SEQ_LEN:
+            continue
+        while seg_start - start >= SEQ_LEN:
+            windows.append((start, start + SEQ_LEN))
+            start += SEQ_LEN
+        if seg_start > start:
+            windows.append((start, seg_start))
+            start = seg_start
+        while seg_end - start > SEQ_LEN:
+            windows.append((start, start + SEQ_LEN))
+            start += SEQ_LEN
+    while length - start > SEQ_LEN:
+        windows.append((start, start + SEQ_LEN))
+        start += SEQ_LEN
+    if start < length:
+        windows.append((start, length))
+    for window_start, window_end in windows:
+        if not 0 <= window_start < window_end <= length:
+            raise ValueError("segment window is outside the input")
+        if window_end - window_start > SEQ_LEN:
+            raise ValueError(
+                "segment window exceeds the model limit; segmentation is "
+                "not contiguous")
+    return windows
 
 
 def safe_windows(text: str, edges: list[Edge]) -> list[tuple[int, int]]:
@@ -133,15 +176,6 @@ class G2POnnxRuntime:
         self.provider_name = self.session.get_providers()[0]
         self.input_names = [i.name for i in self.session.get_inputs()]
         self._reading_cache: dict[str, tuple[np.ndarray, np.ndarray]] = {}
-        self._char_readings: dict[str, frozenset[str]] | None = None
-        self._decomposition_cache: dict[tuple[str, str],
-                                        tuple[tuple[int, str], ...]] = {}
-
-    def _context_metadata(self, segments) -> dict:
-        if self._char_readings is None:
-            self._char_readings = char_readings_from_table(self.table)
-        return build_context_metadata(
-            segments, self._char_readings, self._decomposition_cache)
 
     def _features(self, text: str):
         unk = self.unk_id
@@ -219,47 +253,89 @@ class G2POnnxRuntime:
         text = normalize_surface(text)
         if not text:
             return []
-        global_edges = build_edges(
-            text, self.lexicon, self._context_metadata(segments))
-        windows = safe_windows(text, global_edges)
+        # One graph per fixed-word window: a global graph can exceed MAX_EDGES.
         scored = []
-        for wstart, wend in windows:
-            local = local_edges(text, global_edges, wstart, wend)
+        for wstart, wend in windows_from_segments(segments, len(text)):
+            local = build_edges(text[wstart:wend], self.lexicon)
             scored.append((wstart, wend, local,
                            self.score(text[wstart:wend], local)))
 
         words: list[dict] = []
         for segment in segments:
             start, end = segment.start, segment.end
+            if not str(segment.surface).strip():
+                # Whitespace has no MeCab node and gets no reading.
+                continue
             candidates: list[dict] = []
-            sub_edges: list[Edge] = []
-            sub_scores: list[float] = []
+            chunks: list[tuple[list[Edge], list[float]]] = []
             for wstart, wend, local, scores in scored:
                 if wend <= start or end <= wstart:
                     continue
                 offset = start - wstart
+                chunk_edges: list[Edge] = []
+                chunk_scores: list[float] = []
                 for j, edge in enumerate(local):
                     if offset <= edge.start and edge.end <= end - wstart:
-                        sub_edges.append(Edge(
+                        chunk_edges.append(Edge(
                             edge.start - offset, edge.end - offset,
                             edge.surface, edge.reading, edge.source,
                             edge.prior, edge.confidence, edge.locked))
-                        sub_scores.append(float(scores[j]))
-            if sub_edges:
+                        chunk_scores.append(float(scores[j]))
+                if chunk_edges:
+                    chunks.append((chunk_edges, chunk_scores))
+            if len(chunks) == 1:
+                chunk_edges, chunk_scores = chunks[0]
                 try:
-                    paths = decode_beam(sub_scores, sub_edges, end - start,
-                                        beam_size)
+                    paths = decode_beam(chunk_scores, chunk_edges,
+                                        end - start, beam_size)
                 except ValueError:
                     paths = []
                 seen: set[str] = set()
                 for path_score, indices in paths:
-                    reading = "".join(sub_edges[i].reading for i in indices)
+                    reading = "".join(chunk_edges[i].reading
+                                      for i in indices)
                     if reading not in seen:
                         seen.add(reading)
                         candidates.append({"reading": reading,
                                            "score": path_score})
                     if len(candidates) >= beam_size:
                         break
+            elif chunks:
+                # Chunks are scored by separate forward passes, so decode them
+                # independently and join the best paths left to right.
+                combos: list[tuple[float, str]] = [(0.0, "")]
+                for chunk_edges, chunk_scores in chunks:
+                    low = min(edge.start for edge in chunk_edges)
+                    high = max(edge.end for edge in chunk_edges)
+                    shifted = [Edge(edge.start - low, edge.end - low,
+                                    edge.surface, edge.reading, edge.source,
+                                    edge.prior, edge.confidence, edge.locked)
+                               for edge in chunk_edges]
+                    try:
+                        paths = decode_beam(chunk_scores, shifted,
+                                            high - low, beam_size)
+                    except ValueError:
+                        paths = []
+                    if not paths:
+                        combos = []
+                        break
+                    chunk_readings = [
+                        (float(path_score),
+                         "".join(shifted[i].reading for i in indices))
+                        for path_score, indices in paths[:2]]
+                    combos = [
+                        (base_score + chunk_score, base + reading)
+                        for base_score, base in combos
+                        for chunk_score, reading in chunk_readings]
+                    combos.sort(key=lambda item: -item[0])
+                    combos = combos[:beam_size]
+                seen = set()
+                for path_score, reading in combos:
+                    if reading in seen:
+                        continue
+                    seen.add(reading)
+                    candidates.append({"reading": reading,
+                                       "score": path_score})
             words.append({"surface": segment.surface, "start": start,
                           "end": end, "candidates": candidates})
         return words
