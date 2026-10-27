@@ -77,6 +77,21 @@ def windows_from_segments(segments, length: int) -> list[tuple[int, int]]:
     return windows
 
 
+def _segment_contained(edges: list[Edge], segments, start: int,
+                       end: int) -> list[Edge]:
+    """Drop edges that cross a fixed-word boundary."""
+    segment_end = [0] * (end - start)
+    for segment in segments:
+        seg_start = max(int(segment.start), start)
+        seg_end = min(int(segment.end), end)
+        for position in range(seg_start - start, seg_end - start):
+            segment_end[position] = seg_end - start
+    return [edge for edge in edges
+            if 0 <= edge.start < len(segment_end)
+            and segment_end[edge.start] > 0
+            and edge.end <= segment_end[edge.start]]
+
+
 def safe_windows(text: str, edges: list[Edge]) -> list[tuple[int, int]]:
     if len(text) <= SEQ_LEN:
         return [(0, len(text))]
@@ -256,9 +271,14 @@ class G2POnnxRuntime:
         # One graph per fixed-word window: a global graph can exceed MAX_EDGES.
         scored = []
         for wstart, wend in windows_from_segments(segments, len(text)):
-            local = build_edges(text[wstart:wend], self.lexicon)
-            scored.append((wstart, wend, local,
-                           self.score(text[wstart:wend], local)))
+            local = _segment_contained(
+                build_edges(text[wstart:wend], self.lexicon),
+                segments, wstart, wend)
+            if local:
+                scored.append((wstart, wend, local,
+                               self.score(text[wstart:wend], local)))
+            else:
+                scored.append((wstart, wend, [], np.zeros(0)))
 
         words: list[dict] = []
         for segment in segments:

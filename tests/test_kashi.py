@@ -507,3 +507,29 @@ def test_segment_longer_than_window_is_decoded_per_chunk():
     assert len(words) == 1
     assert words[0]["candidates"]
     assert words[0]["candidates"][0]["reading"] == text
+
+
+def test_cross_segment_edges_are_not_scored():
+    from g2pflow.converters.kashi.lexicon import UnifiedLexicon
+    from g2pflow.converters.kashi.runtime import G2POnnxRuntime
+    pack = {
+        "大学": (("だいがく", "jmdict", 0.8, 0.8),),
+        "生": (("せい", "jmdict", 0.8, 0.8),),
+        "大学生": (("だいがくせい", "jmdict", 0.9, 0.9),),
+    }
+    runtime = object.__new__(G2POnnxRuntime)
+    runtime.lexicon = UnifiedLexicon(pack, use_copy=False)
+    runtime._char_readings = {}
+    runtime._decomposition_cache = {}
+    seen = []
+
+    def score(local_text, edges):
+        seen.extend((edge.start, edge.end, edge.reading) for edge in edges)
+        return [0.0] * len(edges)
+
+    runtime.score = score
+    segments = [Segment(0, 2, "大学"), Segment(2, 3, "生")]
+    words = runtime.predict_words("大学生", segments, beam_size=4)
+    assert all(not (start < 2 < end) for start, end, _reading in seen)
+    assert "だいがくせい" not in {reading for _s, _e, reading in seen}
+    assert all(word["candidates"] for word in words)

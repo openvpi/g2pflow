@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -59,6 +60,12 @@ def merge_numeral_counters(segments: list[Segment],
     return merged
 
 
+def _tagger_args(dicdir: Path) -> str:
+    rc = dicdir / "mecabrc"
+    rc_path = rc if rc.is_file() else Path(os.devnull)
+    return f'-r "{rc_path.as_posix()}" -d "{dicdir.as_posix()}"'
+
+
 class UnidicSegmenter:
     """UniDic (MeCab) word boundaries via fugashi."""
 
@@ -72,7 +79,7 @@ class UnidicSegmenter:
             if not dicdir.exists():
                 raise FileNotFoundError(
                     f"UniDic dictionary does not exist: {dicdir}")
-            self.tagger = fugashi.Tagger(f'-r nul -d "{dicdir.as_posix()}"')
+            self.tagger = fugashi.Tagger(_tagger_args(dicdir))
         else:
             import unidic
 
@@ -86,9 +93,7 @@ class UnidicSegmenter:
                 with FileLock(str(dicdir.parent / "download.lock")):
                     if not all(path.is_file() for path in required):
                         download_version()
-            self.tagger = fugashi.Tagger(
-                f'-r "{(dicdir / "mecabrc").as_posix()}" '
-                f'-d "{dicdir.as_posix()}"')
+            self.tagger = fugashi.Tagger(_tagger_args(dicdir))
 
     def whole_word_readings(self, text: str, nbest: int = 8) -> list[str]:
         """UniDic prons for analyses that keep ``text`` as a single word."""
