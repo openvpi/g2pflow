@@ -33,6 +33,47 @@ def _default_cache_dir() -> Path:
         else Path.home() / ".cache" / "g2pflow"
 
 
+
+_REQUIRED_MODEL_INPUTS = frozenset({
+    "input_ids", "attention_mask", "char_type_ids", "edge_start", "edge_end",
+    "edge_reading_ids", "edge_reading_mask", "edge_mask", "edge_source_ids",
+    "edge_prior", "edge_pack_ids", "edge_locked",
+})
+
+
+def _model_inputs(path: Path) -> frozenset[str] | None:
+    """Input names of an ONNX file, or None when it cannot be read."""
+    try:
+        import onnxruntime as ort
+    except ModuleNotFoundError:
+        return None
+    try:
+        session = ort.InferenceSession(str(path),
+                                       providers=["CPUExecutionProvider"])
+    except Exception:  # noqa: BLE001 - truncated/corrupt cache entry
+        return None
+    return frozenset(item.name for item in session.get_inputs())
+
+
+def _model_is_current(path: Path) -> bool:
+    expected = ",".join(sorted(_REQUIRED_MODEL_INPUTS))
+    stamp = path.with_suffix(path.suffix + ".inputs")
+    try:
+        if path.is_file() \
+                and stamp.read_text(encoding="utf-8").strip() == expected:
+            return True
+    except OSError:
+        pass
+    names = _model_inputs(path)
+    if names is None or names != _REQUIRED_MODEL_INPUTS:
+        return False
+    try:
+        stamp.write_text(expected + "\n", encoding="utf-8")
+    except OSError:
+        pass
+    return True
+
+
 def _download(url: str, path: Path, *, attempts: int = 3) -> None:
     """Stream *url* to *path*, retrying and verifying Content-Length."""
     last_error: Exception | None = None
@@ -121,9 +162,13 @@ class JapaneseKashiConverter(Converter):
     def _get_runtime(self):
         if self._runtime is not None:
             return self._runtime
+        # A stale model has to be refetched as well: the cache is keyed by a
+        # release tag that does not change between model generations.
+        stale_model = (self._model_path.is_file()
+                       and not _model_is_current(self._model_path))
         missing = [path for path in (self._model_path, self._lexicon_path)
                    if not path.is_file()]
-        if missing:
+        if missing or stale_model:
             try:
                 from filelock import FileLock
             except ModuleNotFoundError as exc:
@@ -136,6 +181,10 @@ class JapaneseKashiConverter(Converter):
             self._model_path.parent.mkdir(parents=True, exist_ok=True)
             # Serialize first-use downloads across spawned workers.
             with FileLock(str(self._model_path.with_suffix(".download.lock"))):
+                if stale_model and not _model_is_current(self._model_path):
+                    print("[g2pflow] cached model is from an older release; "
+                          "re-downloading ...", flush=True)
+                    self._model_path.unlink(missing_ok=True)
                 for path, url in ((self._model_path, MODEL_URL),
                                   (self._lexicon_path, LEXICON_URL)):
                     if not path.is_file():
@@ -197,7 +246,6 @@ class JapaneseKashiConverter(Converter):
     def _kanji_readings(self, surface: str, candidates: list[dict],
                         kana: str, pron: str) -> list[G2PReading]:
         """Model candidates converted like japanese-mecab.
-
         A candidate matching UniDic's kana uses UniDic's pron; others are kept
         verbatim.
         """

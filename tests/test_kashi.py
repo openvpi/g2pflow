@@ -533,3 +533,61 @@ def test_cross_segment_edges_are_not_scored():
     assert all(not (start < 2 < end) for start, end, _reading in seen)
     assert "だいがくせい" not in {reading for _s, _e, reading in seen}
     assert all(word["candidates"] for word in words)
+
+
+def test_runtime_features_have_no_component_channel():
+    """The shipped model takes no IDS input, so none is ever built."""
+    from g2pflow.converters.kashi.runtime import G2POnnxRuntime
+
+    runtime = object.__new__(G2POnnxRuntime)
+    runtime.unk_id = 1
+    runtime.vocab = {"[UNK]": 1, "大": 5, "学": 6}
+
+    input_ids, attention, char_types = runtime._features("大学")
+    assert input_ids[0, 0] == 5 and input_ids[0, 1] == 6
+    assert attention[0, :2].all()
+
+
+def test_bundle_without_a_components_section_still_loads(tmp_path):
+    """Released bundles omit the GPLv2 IDS section; parsing must not require it."""
+    import lzma
+
+    from g2pflow.converters.kashi.runtime import _load_bundle
+
+    body = "\n".join([
+        "##kashi-g2p v1",
+        "##section pack",
+        "大学\tだいがく\tunidic\t1.0\t1.0",
+        "##section prior",
+        "大学\tだいがく\t1",
+        "##section vocab",
+        "大",
+        "学",
+        "##end",
+    ]) + "\n"
+    path = tmp_path / "lexicon.txz"
+    path.write_bytes(lzma.compress(body.encode("utf-8")))
+
+    table, prior, vocab = _load_bundle(path)
+    assert table["大学"] == (("だいがく", "unidic", 1.0, 1.0),)
+    assert prior[("大学", "だいがく")] == 1
+    assert vocab == ["大", "学"]
+
+
+def test_stale_cached_model_is_treated_as_missing(tmp_path, monkeypatch):
+    """A cache written by an older release must not be reused verbatim."""
+    import g2pflow.converters.kashi as kashi
+
+    model = tmp_path / "model.onnx"
+    model.write_bytes(b"not really an onnx file")
+
+    # Unparsable cache cannot match the current signature.
+    assert kashi._model_is_current(model) is False
+
+    # A stamp alone is not enough: the file must still be there.
+    stamp = model.with_suffix(".onnx.inputs")
+    stamp.write_text(",".join(sorted(kashi._REQUIRED_MODEL_INPUTS)) + "\n",
+                     encoding="utf-8")
+    assert kashi._model_is_current(model) is True
+    model.unlink()
+    assert kashi._model_is_current(model) is False

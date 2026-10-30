@@ -14,7 +14,7 @@ except ImportError as exc:  # pragma: no cover
         'python -m pip install "g2pflow[kashi]"'
     ) from exc
 
-from .constants import MAX_COMPONENTS, MAX_EDGES, READING_LEN, SEQ_LEN
+from .constants import MAX_EDGES, READING_LEN, SEQ_LEN
 from .decoder import decode_beam
 from .lexicon import (
     Edge,
@@ -136,12 +136,11 @@ def local_edges(text: str, edges: list[Edge], start: int, end: int) -> list[Edge
 
 
 def _load_bundle(bundle_path: Path):
-    """Load (pack, prior, components, vocab) from a lexicon.txz bundle."""
+    """Load (pack, prior, vocab) from a lexicon.txz bundle."""
     with lzma.open(bundle_path, "rb") as fh:
         raw = fh.read()
     table: dict[str, tuple] = {}
     prior: dict[tuple[str, str], int] = {}
-    components: dict[str, list] = {}
     vocab: list[str] = []
     section = None
     last_surface = None
@@ -165,21 +164,17 @@ def _load_bundle(bundle_path: Path):
         elif section == "prior":
             surface, reading, row = line.split("\t")
             prior[(surface, reading)] = int(row)
-        elif section == "components":
-            char, _, ids = line.partition("\t")
-            components[char] = [int(v) for v in ids.split(",")] if ids else []
         elif section == "vocab":
             vocab.append(line)
-    return table, prior, components, vocab
+    return table, prior, vocab
 
 
 class G2POnnxRuntime:
     def __init__(self, *, model_path: str | Path,
                  bundle_path: str | Path, prefer_dml: bool = False):
-        table, prior, components, vocab = _load_bundle(Path(bundle_path))
+        table, prior, vocab = _load_bundle(Path(bundle_path))
         self.table = table
         self.prior_index = prior
-        self.components = components
         self.vocab = {token: index for index, token in enumerate(vocab)}
         self.unk_id = int(self.vocab.get("[UNK]", 1))
         self.lexicon = UnifiedLexicon(self.table, use_copy=False)
@@ -199,13 +194,10 @@ class G2POnnxRuntime:
         for index, char in enumerate(text[:SEQ_LEN]):
             input_ids[0, index] = self.vocab.get(char, unk)
             attention[0, index] = True
-        components = np.zeros((1, SEQ_LEN, MAX_COMPONENTS), dtype=np.int64)
         char_types = np.zeros((1, SEQ_LEN), dtype=np.int64)
         for index, char in enumerate(text[:SEQ_LEN]):
             char_types[0, index] = _char_type(char)
-            for j, value in enumerate(self.components.get(char, ())[:MAX_COMPONENTS]):
-                components[0, index, j] = value
-        return input_ids, attention, components, char_types
+        return input_ids, attention, char_types
 
     def _reading_tokens(self, reading: str) -> tuple[np.ndarray, np.ndarray]:
         """Token ids for one reading string, cached (readings repeat heavily)."""
@@ -253,10 +245,10 @@ class G2POnnxRuntime:
                     edge_locked=locked)
 
     def score(self, text: str, edges: list[Edge]) -> np.ndarray:
-        input_ids, attention, components, char_types = self._features(text)
+        input_ids, attention, char_types = self._features(text)
         feeds = self._edge_tensors(edges)
         feeds.update(input_ids=input_ids, attention_mask=attention,
-                     component_ids=components, char_type_ids=char_types)
+                     char_type_ids=char_types)
         scores = self.session.run(["edge_scores"], feeds)[0]
         return scores[0][:len(edges)]
 
