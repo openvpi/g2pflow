@@ -61,12 +61,9 @@ def _is_stale(path: Path) -> bool:
 
 
 def _install(url: str, path: Path, *, stale=None) -> None:
-    """Download *url* to a temporary file, then move it into place.
+    """Download *url* and move it into place only after the transfer succeeded.
 
-    The destination is only replaced once the transfer succeeded, so a failed
-    download cannot destroy a usable cache entry. When *stale* is given, a
-    concurrent worker may already have refreshed the file, in which case the
-    download is skipped.
+    With *stale*, skip when a concurrent worker already refreshed the file.
     """
     if stale is not None and not stale(path):
         return
@@ -155,9 +152,8 @@ def _normalize_with_offsets(text: str) -> tuple[str, list[int], list[int]]:
 class JapaneseKashiConverter(Converter):
     """Japanese G2P readings via the kashi-g2p ONNX model.
     *dict_path*: romaji-to-phoneme dictionary; *model_path* / *lexicon_path* /
-    *cache_dir* / *unidic_dir*: resources (auto-download); *beam_size*: caps
-    the candidates per word (16); 1 yields the best reading only — for a kana
-    word that is the UniDic contextual reading, literal spelling dropped.
+    *cache_dir* / *unidic_dir*: auto-download resources; *beam_size* caps
+    candidates per word; 1 yields the best reading only.
     """
 
     def __init__(self, dict_path: str, *,
@@ -171,8 +167,7 @@ class JapaneseKashiConverter(Converter):
         cache = Path(cache_dir) if cache_dir else _default_cache_dir() / "kashi"
         cache = cache / _RELEASE_TAG
         # Only files this package placed in its own cache may be replaced.
-        # A path the caller passed in belongs to them, even when it points at
-        # an older export.
+        # Caller-supplied paths belong to the caller.
         self._model_is_managed = model_path is None
         self._lexicon_is_managed = lexicon_path is None
         self._model_path = Path(model_path) if model_path else cache / "model.onnx"
@@ -195,9 +190,8 @@ class JapaneseKashiConverter(Converter):
     def _get_runtime(self):
         if self._runtime is not None:
             return self._runtime
-        # The cache is keyed by a release tag that does not change between
-        # model generations, so a managed file may be out of date. Files the
-        # caller supplied are never touched: they decide what runs.
+        # Caller-supplied files are never touched. Only cache entries this
+        # package manages may be refreshed when out of date.
         user_missing = [
             path for path, managed in (
                 (self._model_path, self._model_is_managed),
@@ -287,8 +281,6 @@ class JapaneseKashiConverter(Converter):
                 readings.append(reading)
         if not readings:
             raise G2PConversionError([surface])
-        # beam_size caps the final candidate list, so 1 yields a single
-        # reading — the contextual pron, literal spelling dropped first.
         return readings[:self._beam_size]
 
     def __getstate__(self) -> dict:

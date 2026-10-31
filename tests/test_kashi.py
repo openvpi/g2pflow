@@ -536,7 +536,6 @@ def test_cross_segment_edges_are_not_scored():
 
 
 def test_runtime_features_have_no_component_channel():
-    """The shipped model takes no IDS input, so none is ever built."""
     from g2pflow.converters.kashi.runtime import G2POnnxRuntime
 
     runtime = object.__new__(G2POnnxRuntime)
@@ -549,7 +548,7 @@ def test_runtime_features_have_no_component_channel():
 
 
 def test_bundle_without_a_components_section_still_loads(tmp_path):
-    """Released bundles omit the GPLv2 IDS section; parsing must not require it."""
+    """Parsing must not require a components section."""
     import lzma
 
     from g2pflow.converters.kashi.runtime import _load_bundle
@@ -575,7 +574,6 @@ def test_bundle_without_a_components_section_still_loads(tmp_path):
 
 
 def test_stale_cached_model_is_treated_as_missing(tmp_path, monkeypatch):
-    """A cache written by an older release must not be reused verbatim."""
     import g2pflow.converters.kashi as kashi
 
     model = tmp_path / "model.onnx"
