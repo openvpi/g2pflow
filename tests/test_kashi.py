@@ -591,3 +591,48 @@ def test_stale_cached_model_is_treated_as_missing(tmp_path, monkeypatch):
     assert kashi._model_is_current(model) is True
     model.unlink()
     assert kashi._model_is_current(model) is False
+
+
+def test_caller_supplied_model_is_never_downloaded_over(kana_dict, tmp_path,
+                                                       monkeypatch):
+    """An explicit model_path is the caller's file; never replace it."""
+    import g2pflow.converters.kashi as kashi
+
+    model = tmp_path / "mine.onnx"
+    model.write_bytes(b"caller supplied, not a real export")
+    lexicon = tmp_path / "mine.txz"
+    lexicon.write_bytes(b"caller supplied")
+
+    calls = []
+    monkeypatch.setattr(kashi, "_download",
+                        lambda url, path, **kw: calls.append(url))
+
+    converter = JapaneseKashiConverter(str(kana_dict), model_path=str(model),
+                                       lexicon_path=str(lexicon))
+    assert converter._model_is_managed is False
+    assert converter._lexicon_is_managed is False
+    assert converter._needs_download() is False
+    converter._fetch_managed()
+    assert calls == []
+    assert model.stat().st_size == len(b"caller supplied, not a real export")
+
+
+def test_failed_download_leaves_the_cached_model_intact(tmp_path, monkeypatch):
+    """A stale managed cache is only replaced once the new file arrived."""
+    import g2pflow.converters.kashi as kashi
+
+    model = tmp_path / "model.onnx"
+    model.write_bytes(b"previous generation")
+
+    def fail(url, path, **kw):
+        raise IOError("simulated offline")
+
+    monkeypatch.setattr(kashi, "_download", fail)
+    try:
+        kashi._install(kashi.MODEL_URL, model)
+    except IOError:
+        pass
+    else:
+        raise AssertionError("expected the download failure to propagate")
+    assert model.read_bytes() == b"previous generation"
+    assert not model.with_suffix(".onnx.staged").exists()

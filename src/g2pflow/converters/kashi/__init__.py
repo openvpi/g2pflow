@@ -55,6 +55,31 @@ def _model_inputs(path: Path) -> frozenset[str] | None:
     return frozenset(item.name for item in session.get_inputs())
 
 
+def _is_stale(path: Path) -> bool:
+    """Whether an existing model file predates the current input signature."""
+    return path.is_file() and not _model_is_current(path)
+
+
+def _install(url: str, path: Path, *, stale=None) -> None:
+    """Download *url* to a temporary file, then move it into place.
+
+    The destination is only replaced once the transfer succeeded, so a failed
+    download cannot destroy a usable cache entry. When *stale* is given, a
+    concurrent worker may already have refreshed the file, in which case the
+    download is skipped.
+    """
+    if stale is not None and not stale(path):
+        return
+    print(f"[g2pflow] downloading {url} ...", flush=True)
+    staged = path.with_suffix(path.suffix + ".staged")
+    try:
+        _download(url, staged)
+        path.with_suffix(path.suffix + ".inputs").unlink(missing_ok=True)
+        staged.replace(path)
+    finally:
+        staged.unlink(missing_ok=True)
+
+
 def _model_is_current(path: Path) -> bool:
     expected = ",".join(sorted(_REQUIRED_MODEL_INPUTS))
     stamp = path.with_suffix(path.suffix + ".inputs")
@@ -142,6 +167,11 @@ class JapaneseKashiConverter(Converter):
         self._kana = JapaneseKanaConverter(dict_path=dict_path)
         cache = Path(cache_dir) if cache_dir else _default_cache_dir() / "kashi"
         cache = cache / _RELEASE_TAG
+        # Only files this package placed in its own cache may be replaced.
+        # A path the caller passed in belongs to them, even when it points at
+        # an older export.
+        self._model_is_managed = model_path is None
+        self._lexicon_is_managed = lexicon_path is None
         self._model_path = Path(model_path) if model_path else cache / "model.onnx"
         self._lexicon_path = Path(lexicon_path) if lexicon_path else cache / "lexicon.txz"
         self._prefer_dml = prefer_dml
@@ -162,13 +192,19 @@ class JapaneseKashiConverter(Converter):
     def _get_runtime(self):
         if self._runtime is not None:
             return self._runtime
-        # A stale model has to be refetched as well: the cache is keyed by a
-        # release tag that does not change between model generations.
-        stale_model = (self._model_path.is_file()
-                       and not _model_is_current(self._model_path))
-        missing = [path for path in (self._model_path, self._lexicon_path)
-                   if not path.is_file()]
-        if missing or stale_model:
+        # The cache is keyed by a release tag that does not change between
+        # model generations, so a managed file may be out of date. Files the
+        # caller supplied are never touched: they decide what runs.
+        user_missing = [
+            path for path, managed in (
+                (self._model_path, self._model_is_managed),
+                (self._lexicon_path, self._lexicon_is_managed))
+            if not managed and not path.is_file()]
+        if user_missing:
+            raise FileNotFoundError(
+                "kashi model file not found: "
+                + ", ".join(str(path) for path in user_missing))
+        if self._needs_download():
             try:
                 from filelock import FileLock
             except ModuleNotFoundError as exc:
@@ -181,15 +217,8 @@ class JapaneseKashiConverter(Converter):
             self._model_path.parent.mkdir(parents=True, exist_ok=True)
             # Serialize first-use downloads across spawned workers.
             with FileLock(str(self._model_path.with_suffix(".download.lock"))):
-                if stale_model and not _model_is_current(self._model_path):
-                    print("[g2pflow] cached model is from an older release; "
-                          "re-downloading ...", flush=True)
-                    self._model_path.unlink(missing_ok=True)
-                for path, url in ((self._model_path, MODEL_URL),
-                                  (self._lexicon_path, LEXICON_URL)):
-                    if not path.is_file():
-                        print(f"[g2pflow] downloading {url} ...", flush=True)
-                        _download(url, path)
+                if self._needs_download():
+                    self._fetch_managed()
         from .runtime import G2POnnxRuntime
         self._runtime = G2POnnxRuntime(
             model_path=self._model_path,
@@ -197,6 +226,27 @@ class JapaneseKashiConverter(Converter):
             prefer_dml=self._prefer_dml,
         )
         return self._runtime
+
+    def _needs_download(self) -> bool:
+        """Whether a package-managed file is missing or out of date."""
+        if self._model_is_managed:
+            if not self._model_path.is_file() or _is_stale(self._model_path):
+                return True
+        if self._lexicon_is_managed and not self._lexicon_path.is_file():
+            return True
+        return False
+
+    def _fetch_managed(self) -> None:
+        """Download into place, keeping any existing file until success."""
+        if self._model_is_managed:
+            if not self._model_path.is_file():
+                _install(MODEL_URL, self._model_path)
+            elif _is_stale(self._model_path):
+                print("[g2pflow] cached model is from an older release; "
+                      "re-downloading ...", flush=True)
+                _install(MODEL_URL, self._model_path, stale=_is_stale)
+        if self._lexicon_is_managed and not self._lexicon_path.is_file():
+            _install(LEXICON_URL, self._lexicon_path)
 
     def _reading(self, kana: str) -> G2PReading:
         kana_words = self._kana._convert(kana)
