@@ -71,6 +71,7 @@ def _install(url: str, path: Path, *, stale=None) -> None:
     if stale is not None and not stale(path):
         return
     print(f"[g2pflow] downloading {url} ...", flush=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
     staged = path.with_suffix(path.suffix + ".staged")
     try:
         _download(url, staged)
@@ -154,7 +155,9 @@ def _normalize_with_offsets(text: str) -> tuple[str, list[int], list[int]]:
 class JapaneseKashiConverter(Converter):
     """Japanese G2P readings via the kashi-g2p ONNX model.
     *dict_path*: romaji-to-phoneme dictionary; *model_path* / *lexicon_path* /
-    *cache_dir* / *unidic_dir*: resources (auto-download); *beam_size*: N-best per word (16).
+    *cache_dir* / *unidic_dir*: resources (auto-download); *beam_size*: caps
+    the candidates per word (16); 1 yields the best reading only — for a kana
+    word that is the UniDic contextual reading, literal spelling dropped.
     """
 
     def __init__(self, dict_path: str, *,
@@ -284,7 +287,9 @@ class JapaneseKashiConverter(Converter):
                 readings.append(reading)
         if not readings:
             raise G2PConversionError([surface])
-        return readings
+        # beam_size caps the final candidate list, so 1 yields a single
+        # reading — the contextual pron, literal spelling dropped first.
+        return readings[:self._beam_size]
 
     def __getstate__(self) -> dict:
         # Native ONNX/fugashi handles are rebuilt lazily after unpickling.
@@ -317,7 +322,7 @@ class JapaneseKashiConverter(Converter):
                 continue
         if not readings:
             raise G2PConversionError([surface])
-        return readings
+        return readings[:self._beam_size]
 
     def _convert(self, text: str) -> list[G2PWord]:
         if not text:

@@ -158,7 +158,8 @@ kashi-g2p model only chooses readings inside those spans, and each word
 exposes beam-search N-best candidates in the same ``readings`` structure as
 `japanese-mecab`, converted into romaji scripts and phonemes from
 *dict_path*. `beam_size` caps the candidates per word; `beam_size=1`
-yields the best reading only.
+yields the best reading only — for a kana word that is the UniDic
+contextual reading, with the literal spelling dropped first.
 
 Like `japanese-mecab`, the converter claims Japanese-script runs only;
 latin, digits, punctuation and whitespace are routed to other converters

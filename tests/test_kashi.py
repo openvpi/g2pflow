@@ -636,3 +636,31 @@ def test_failed_download_leaves_the_cached_model_intact(tmp_path, monkeypatch):
         raise AssertionError("expected the download failure to propagate")
     assert model.read_bytes() == b"previous generation"
     assert not model.with_suffix(".onnx.staged").exists()
+
+
+def test_beam_size_caps_kana_word_candidates(dictionary):
+    """beam_size caps the final list; 1 keeps only the contextual reading."""
+    dict_path = dictionary("ha\th a\nwa\tw a\n")
+
+    one = JapaneseKashiConverter(str(dict_path), beam_size=1)
+    readings = one._kana_readings("は", "ワ")
+    assert len(readings) == 1
+    assert _first_path_phones(readings[0]) == "wa"
+
+    two = JapaneseKashiConverter(str(dict_path), beam_size=2)
+    readings = two._kana_readings("は", "ワ")
+    assert [_first_path_phones(r) for r in readings] == ["wa", "ha"]
+
+
+def test_beam_size_caps_kanji_word_candidates(dictionary):
+    dict_path = dictionary("ki\tk i\nka\tk a\n")
+
+    converter = JapaneseKashiConverter(str(dict_path), beam_size=1)
+    candidates = [{"reading": "キ"}, {"reading": "カ"}]
+    readings = converter._kanji_readings("木", candidates, "キ", "キ")
+    assert len(readings) == 1
+    assert _first_path_phones(readings[0]) == "ki"
+
+
+def _first_path_phones(reading):
+    return "".join("".join(group.phonemes) for group in reading.paths[0])
