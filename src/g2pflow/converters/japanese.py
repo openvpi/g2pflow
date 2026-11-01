@@ -12,8 +12,7 @@ from .base import (
 from .dictionary import PronunciationScriptDictionaryConverter
 from .text import SMALL_KANA, find_run, is_kana
 
-# Romaji table derived from cpp-kana's kanaToRomajiMap. Katakana with
-# hiragana equivalents is converted before lookup.
+# Kana-to-romaji mappings adapted from cpp-kana's kanaToRomajiMap.
 _KANA_TO_ROMAJI: dict[str, str] = {
     # ---- sokuon ----
     "っ": "cl",
@@ -66,10 +65,9 @@ _KANA_TO_ROMAJI: dict[str, str] = {
     "ぬぁ": "nwa", "ぬぃ": "nwi", "ぬぇ": "nwe", "ぬぉ": "nwo",
     "むぁ": "mwa", "むぃ": "mwi", "むぇ": "mwe", "むぉ": "mwo",
     "るぁ": "rwa", "るぃ": "rwi", "るぇ": "rwe", "るぉ": "rwo",
-    # ---- vu variants (hiragana U+3094) ----
+    # ---- v-series kana ----
     "ゔ": "vu",
     "ゔぁ": "va", "ゔぃ": "vi", "ゔぇ": "ve", "ゔぉ": "vo",
-    # Voiced katakana without precomposed hiragana equivalents.
     "ヷ": "va", "ヸ": "vi", "ヹ": "ve", "ヺ": "vo",
     # ---- voiced yoon and loanword digraphs ----
     "ぢゃ": "ja", "ぢゅ": "ju", "ぢぇ": "je", "ぢょ": "jo",

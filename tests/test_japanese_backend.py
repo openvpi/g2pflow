@@ -315,7 +315,7 @@ def test_mecab_fixed_word_normalizes_lookup_and_preserves_source(dictionary):
     assert word.readings[0].paths == [[G2PGroup("gya", ["GY", "A"])]]
 
 
-def test_mecab_unsupported_kana_fallback_is_not_silent(kana_dict):
+def test_mecab_unsupported_kana_raises(kana_dict):
     instance = JapaneseMecabConverter(str(kana_dict))
     instance._tagger = TaggerDouble(["\u3097"], {})
     with pytest.raises(KeyError):

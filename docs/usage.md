@@ -98,14 +98,11 @@ bundled: the calling application controls its phoneme inventory. Unsupported
 script keys raise `KeyError`. Mandarin/Cantonese prefer phrase-context readings,
 then preserve other supported readings in order.
 
-Kana conversion keeps digraphs together, normalizes katakana to hiragana, and
-maps through the romaji table. Long-vowel marks and the standalone handakuten
-produce no standalone phonemes and are omitted from output.
-Decomposed dakuten/handakuten are composed before tokenization, so `き` +
-U+3099 + `ゃ` has the same reading as `ぎゃ` while retaining its original word
-text. The voiced katakana `ヷ`, `ヸ`, `ヹ`, and `ヺ` (including their decomposed
-forms) use the existing `va`, `vi`, `ve`, and `vo` dictionary keys. Unsupported
-kana and unattached combining marks raise an error rather than being omitted.
+Kana conversion composes voicing marks, keeps digraphs together, and maps
+hiragana and katakana to romaji dictionary keys. Output words preserve the
+input spelling. Long-vowel marks and standalone handakuten produce no phonemes
+and are omitted from output.
+
 `double_written_sokuon=False` looks up a sokuon as `cl` separately from the
 following kana. With `True`, the sokuon and following consonant-leading kana
 form one pronunciation unit and use a combined dictionary key: for example,
@@ -125,8 +122,6 @@ Install `g2pflow[ja]` for fugashi, UniDic and filelock. `japanese-mecab` accepts
 `double_written_sokuon=False` and `unidic_dir=None`. MeCab supplies word surfaces
 and UniDic's `pron` readings; g2pflow converts each complete reading into grouped
 pronunciation paths using the same Kana implementation.
-Decomposed kana are composed before MeCab segmentation and lookup; output words
-retain the original input spelling.
 
 Importing g2pflow or constructing this converter does not load MeCab or download
 UniDic. Filelock is imported only when a default dictionary download is needed;

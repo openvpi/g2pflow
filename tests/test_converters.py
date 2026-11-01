@@ -212,7 +212,7 @@ def test_voiced_kana_variants_use_existing_dictionary_keys(dictionary, forms, sc
     ("ひ\u309a", "ぴ", "pi"), ("ヒ\u309a", "ピ", "pi"),
     ("き\u3099ゃ", "ぎゃ", "gya"), ("キ\u3099ャ", "ギャ", "gya"),
 ])
-def test_decomposed_kana_preserves_source_and_matches_composed_readings(
+def test_canonical_kana_forms_preserve_source(
         dictionary, raw, composed, script):
     converter = JapaneseKanaConverter(str(dictionary(f"{script}\tONSET VOWEL\n")))
     word = converter.convert(raw)[0]
@@ -237,7 +237,7 @@ def test_decomposed_digraph_with_double_written_sokuon(dictionary):
     ("ヹ", "ヱ\u3099", "ヴェ", "ve"),
     ("ヺ", "ヲ\u3099", "ヴォ", "vo"),
 ])
-def test_voiced_katakana_uses_existing_v_dictionary_keys(
+def test_voiced_katakana_dictionary_readings(
         dictionary, composed, decomposed, modern, script):
     converter = JapaneseKanaConverter(str(dictionary(f"{script}\tV VOWEL\n")))
     expected = converter.convert(modern)[0].readings
@@ -249,7 +249,7 @@ def test_voiced_katakana_uses_existing_v_dictionary_keys(
 
 
 @pytest.mark.parametrize("text", ["\u3097", "\u3099", "\u309a", "あ\u3099", "か \u3099"])
-def test_unsupported_kana_and_unattached_marks_raise_instead_of_disappearing(dictionary, text):
+def test_unsupported_kana_raises(dictionary, text):
     converter = JapaneseKanaConverter(str(dictionary("ka\tK A\na\tA\n")))
     with pytest.raises(KeyError):
         converter.convert(text)
