@@ -205,3 +205,51 @@ def test_voiced_kana_variants_use_existing_dictionary_keys(dictionary, forms, sc
         assert len(words) == 1
         assert words[0].text == text
         assert words[0].readings[0].paths == [[G2PGroup(script, expected)]]
+
+
+@pytest.mark.parametrize("raw,composed,script", [
+    ("か\u3099", "が", "ga"), ("カ\u3099", "ガ", "ga"),
+    ("ひ\u309a", "ぴ", "pi"), ("ヒ\u309a", "ピ", "pi"),
+    ("き\u3099ゃ", "ぎゃ", "gya"), ("キ\u3099ャ", "ギャ", "gya"),
+])
+def test_decomposed_kana_preserves_source_and_matches_composed_readings(
+        dictionary, raw, composed, script):
+    converter = JapaneseKanaConverter(str(dictionary(f"{script}\tONSET VOWEL\n")))
+    word = converter.convert(raw)[0]
+    assert word.text == raw
+    assert word.readings == converter.convert(composed)[0].readings
+    assert phones(word) == [["ONSET", "VOWEL"]]
+    assert converter.convert_word(raw).text == raw
+
+
+def test_decomposed_digraph_with_double_written_sokuon(dictionary):
+    converter = JapaneseKanaConverter(str(dictionary("ggya\tCLOSURE GY A\n")),
+                                      double_written_sokuon=True)
+    word = converter.convert("っき\u3099ゃ")[0]
+    assert word.text == "っき\u3099ゃ"
+    assert word.readings == converter.convert("っぎゃ")[0].readings
+    assert phones(word) == [["CLOSURE", "GY", "A"]]
+
+
+@pytest.mark.parametrize("composed,decomposed,modern,script", [
+    ("ヷ", "ワ\u3099", "ヴァ", "va"),
+    ("ヸ", "ヰ\u3099", "ヴィ", "vi"),
+    ("ヹ", "ヱ\u3099", "ヴェ", "ve"),
+    ("ヺ", "ヲ\u3099", "ヴォ", "vo"),
+])
+def test_voiced_katakana_uses_existing_v_dictionary_keys(
+        dictionary, composed, decomposed, modern, script):
+    converter = JapaneseKanaConverter(str(dictionary(f"{script}\tV VOWEL\n")))
+    expected = converter.convert(modern)[0].readings
+    for text in (composed, decomposed):
+        words = converter.convert(text)
+        assert len(words) == 1
+        assert words[0].text == text
+        assert words[0].readings == expected
+
+
+@pytest.mark.parametrize("text", ["\u3097", "\u3099", "\u309a", "あ\u3099", "か \u3099"])
+def test_unsupported_kana_and_unattached_marks_raise_instead_of_disappearing(dictionary, text):
+    converter = JapaneseKanaConverter(str(dictionary("ka\tK A\na\tA\n")))
+    with pytest.raises(KeyError):
+        converter.convert(text)

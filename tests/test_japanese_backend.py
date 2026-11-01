@@ -287,3 +287,36 @@ def test_pfml_fixed_word_composes_independent_internal_units(kana_dict):
     word = G2PPipeline(converters=[instance]).convert_pfml('<word language="ja">ねこ</word>')[0]
     assert word.text == "ねこ"
     assert [[g.script for g in p] for p in word.readings[0].paths] == [["ne", "ko"]]
+
+
+@pytest.mark.parametrize("has_readings", [True, False])
+def test_mecab_composes_before_segmentation_and_retains_raw_spelling(dictionary, has_readings):
+    instance = JapaneseMecabConverter(str(dictionary("ga\tG A\ngya\tGY A\n")))
+
+    class NormalizedTagger(TaggerDouble):
+        def __call__(self, text):
+            assert text == "がぎゃ"
+            return super().__call__(text)
+
+    analyses = ({"が": [[node("が", "ガ")]], "ぎゃ": [[node("ぎゃ", "ギャ")]]}
+                if has_readings else {})
+    instance._tagger = NormalizedTagger(["が", "ぎ", "ゃ"], analyses)
+    words = instance.convert("か\u3099き\u3099ゃ")
+    assert [word.text for word in words] == ["か\u3099", "き\u3099ゃ"]
+    assert [[g.script for g in word.readings[0].paths[0]] for word in words] == [["ga"], ["gya"]]
+
+
+def test_mecab_fixed_word_normalizes_lookup_and_preserves_source(dictionary):
+    instance = JapaneseMecabConverter(str(dictionary("gya\tGY A\n")))
+    instance._tagger = TaggerDouble([], {"ぎゃ": [[node("ぎゃ", "ギャ")]]})
+    text = "き\u3099ゃ"
+    word = G2PPipeline(converters=[instance]).convert_pfml(f'<word language="ja">{text}</word>')[0]
+    assert word.text == text
+    assert word.readings[0].paths == [[G2PGroup("gya", ["GY", "A"])]]
+
+
+def test_mecab_unsupported_kana_fallback_is_not_silent(kana_dict):
+    instance = JapaneseMecabConverter(str(kana_dict))
+    instance._tagger = TaggerDouble(["\u3097"], {})
+    with pytest.raises(KeyError):
+        instance.convert("\u3097")
