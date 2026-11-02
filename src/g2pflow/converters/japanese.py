@@ -4,122 +4,21 @@ from itertools import product
 from pathlib import Path
 
 from ..registry import converter
+from ._kana import merge_kana_fragments, parse_kana
 from .base import (
-    Converter, G2PConversionError, G2PPath, G2PReading, G2PWord,
+    Converter, G2PConversionError, G2PGroup, G2PPath, G2PReading, G2PWord,
     compose_word,
 )
-from .dictionary import PronunciationScriptDictionaryConverter
-from .text import SMALL_KANA, find_run, is_kana
-
-# Kana-to-romaji mappings adapted from cpp-kana's kanaToRomajiMap.
-_KANA_TO_ROMAJI: dict[str, str] = {
-    # ---- sokuon ----
-    "っ": "cl",
-    # ---- gojuon ----
-    "あ": "a", "い": "i", "う": "u", "え": "e", "お": "o",
-    "か": "ka", "き": "ki", "く": "ku", "け": "ke", "こ": "ko",
-    "さ": "sa", "し": "shi", "す": "su", "せ": "se", "そ": "so",
-    "た": "ta", "ち": "chi", "つ": "tsu", "て": "te", "と": "to",
-    "な": "na", "に": "ni", "ぬ": "nu", "ね": "ne", "の": "no",
-    "は": "ha", "ひ": "hi", "ふ": "fu", "へ": "he", "ほ": "ho",
-    "ま": "ma", "み": "mi", "む": "mu", "め": "me", "も": "mo",
-    "や": "ya", "ゆ": "yu", "よ": "yo",
-    "ら": "ra", "り": "ri", "る": "ru", "れ": "re", "ろ": "ro",
-    "わ": "wa", "ゐ": "wi", "ゑ": "we",
-    "ん": "n",
-    # ---- dakuten ----
-    "が": "ga", "ぎ": "gi", "ぐ": "gu", "げ": "ge", "ご": "go",
-    "ざ": "za", "じ": "ji", "ず": "zu", "ぜ": "ze", "ぞ": "zo",
-    "だ": "da", "ぢ": "ji", "づ": "zu", "で": "de", "ど": "do",
-    "ば": "ba", "び": "bi", "ぶ": "bu", "べ": "be", "ぼ": "bo",
-    # ---- handakuten ----
-    "ぱ": "pa", "ぴ": "pi", "ぷ": "pu", "ぺ": "pe", "ぽ": "po",
-    # ---- yoon / digraphs ----
-    "きゃ": "kya", "きゅ": "kyu", "きょ": "kyo", "きぇ": "kye",
-    "ぎゃ": "gya", "ぎゅ": "gyu", "ぎょ": "gyo", "ぎぇ": "gye",
-    "しゃ": "sha", "しゅ": "shu", "しょ": "sho", "しぇ": "she",
-    "じゃ": "ja",  "じゅ": "ju",  "じょ": "jo",  "じぇ": "je",
-    "ちゃ": "cha", "ちゅ": "chu", "ちょ": "cho", "ちぇ": "che",
-    "にゃ": "nya", "にゅ": "nyu", "にょ": "nyo", "にぇ": "nye",
-    "ひゃ": "hya", "ひゅ": "hyu", "ひょ": "hyo", "ひぇ": "hye",
-    "びゃ": "bya", "びゅ": "byu", "びょ": "byo", "びぇ": "bye",
-    "ぴゃ": "pya", "ぴゅ": "pyu", "ぴょ": "pyo", "ぴぇ": "pye",
-    "みゃ": "mya", "みゅ": "myu", "みょ": "myo", "みぇ": "mye",
-    "りゃ": "rya", "りゅ": "ryu", "りょ": "ryo", "りぇ": "rye",
-    # ---- vowel-extension digraphs ----
-    "いぇ": "ye",
-    "うぁ": "wa", "うぃ": "wi", "うぇ": "we", "うぉ": "wo",
-    "くぁ": "kwa", "くぃ": "kwi", "くぇ": "kwe", "くぉ": "kwo",
-    "ぐぁ": "gwa", "ぐぃ": "gwi", "ぐぇ": "gwe", "ぐぉ": "gwo",
-    "すぁ": "swa", "すぃ": "swi", "すぇ": "swe", "すぉ": "swo",
-    "ずぁ": "zwa", "ずぃ": "zwi", "ずぇ": "zwe", "ずぉ": "zwo",
-    "つぁ": "tsa", "つぃ": "tsi", "つぇ": "tse", "つぉ": "tso",
-    "てぃ": "ti", "てゅ": "tyu",
-    "でぃ": "di", "でゅ": "dyu",
-    "とぅ": "tu",
-    "どぅ": "du",
-    "ふぁ": "fa", "ふぃ": "fi", "ふぇ": "fe", "ふぉ": "fo",
-    "ぶぁ": "bwa", "ぶぃ": "bwi", "ぶぇ": "bwe", "ぶぉ": "bwo",
-    "ぷぁ": "pwa", "ぷぃ": "pwi", "ぷぇ": "pwe", "ぷぉ": "pwo",
-    "ぬぁ": "nwa", "ぬぃ": "nwi", "ぬぇ": "nwe", "ぬぉ": "nwo",
-    "むぁ": "mwa", "むぃ": "mwi", "むぇ": "mwe", "むぉ": "mwo",
-    "るぁ": "rwa", "るぃ": "rwi", "るぇ": "rwe", "るぉ": "rwo",
-    # ---- v-series kana ----
-    "ゔ": "vu",
-    "ゔぁ": "va", "ゔぃ": "vi", "ゔぇ": "ve", "ゔぉ": "vo",
-    "ヷ": "va", "ヸ": "vi", "ヹ": "ve", "ヺ": "vo",
-    # ---- voiced yoon and loanword digraphs ----
-    "ぢゃ": "ja", "ぢゅ": "ju", "ぢぇ": "je", "ぢょ": "jo",
-    "づぁ": "za", "づぉ": "zo",
-    # ---- special ----
-    "を": "o",
-}
-
-_HIRAGANA_START = 0x3041
-_KATAKANA_START = 0x30A1
-_KATAKANA_END = 0x30F6
-
-
-def _kata_to_hira(text: str) -> str:
-    """Convert katakana with hiragana equivalents."""
-    result: list[str] = []
-    for ch in text:
-        cp = ord(ch)
-        if _KATAKANA_START <= cp <= _KATAKANA_END:
-            result.append(chr(cp - _KATAKANA_START + _HIRAGANA_START))
-        else:
-            result.append({"ヽ": "ゝ", "ヾ": "ゞ"}.get(ch, ch))
-    return "".join(result)
-
-
-_CONSONANT_LEADING = frozenset(
-    "bcdfghjklmnpqrstvwxyzBCDFGHJKLMNPQRSTVWXYZ"
-)
-
-
-def _sokuon_script(hiragana: str) -> str | None:
-    """Return the combined dictionary key for a sokuon-prefixed kana unit."""
-    if not hiragana.startswith("っ"):
-        return None
-    following = hiragana[1:].lstrip("ー゜")
-    script = _KANA_TO_ROMAJI.get(following, "")
-    if script and script != "cl" and script[0] in _CONSONANT_LEADING:
-        return script[0] + script
-    return None
+from .dictionary import load_pronunciation_dict
+from .text import find_run, is_kana
 
 
 @converter(id="japanese-kana", language="ja,jpn")
-class JapaneseKanaConverter(PronunciationScriptDictionaryConverter):
-    """Japanese kana-to-phoneme converter.
+class JapaneseKanaConverter(Converter):
+    """Parse kana sequences and look up their romaji keys in a phoneme dictionary.
 
-    Two-phase: kana -> romaji (text-to-script), then
-    romaji -> phonemes (script-to-phonemes via dictionary).
-
-    Parameters mirror cpp-kana:
-        *dict_path*: romaji-to-phoneme dictionary.
-        *double_written_sokuon*: use combined romaji dictionary keys such as
-          ``tta`` instead of separate ``cl`` and ``ta`` keys. Phonemes always
-          come from the dictionary and are never doubled by this option.
+    With double_written_sokuon, a closure and following syllable use one key
+    such as "tta". Phonemes always come from the supplied dictionary.
     """
 
     def __init__(
@@ -128,53 +27,73 @@ class JapaneseKanaConverter(PronunciationScriptDictionaryConverter):
         *,
         double_written_sokuon: bool = False,
     ) -> None:
-        super().__init__(dict_path=dict_path)
+        self._script_dict = load_pronunciation_dict(dict_path)
         self._double_written_sokuon = double_written_sokuon
 
     def find(self, text: str) -> tuple[int, int] | None:
         return find_run(text, is_kana)
 
-    def _tokenize(self, text: str) -> list[str]:
-        words = super()._tokenize(text)
-        if not self._double_written_sokuon:
-            return words
-        result: list[str] = []
-        i = 0
-        while i < len(words):
-            if _kata_to_hira(words[i]) == "っ":
-                j = i + 1
-                while j < len(words) and words[j] in ("ー", "゜"):
-                    j += 1
-                if j < len(words):
-                    combined = "".join(words[i:j + 1])
-                    if _sokuon_script(_kata_to_hira(combined)) is not None:
-                        result.append(combined)
-                        i = j + 1
-                        continue
-            result.append(words[i])
-            i += 1
-        return result
-
     def script_to_paths(self, script: str) -> list[G2PPath]:
         if script == "":
             return [[]]
-        return super().script_to_paths(script)
+        pronunciations = self._script_dict.get(script)
+        if pronunciations is None:
+            raise KeyError(f"Script token {script!r} not found in script-to-phoneme dict.")
+        return [[G2PGroup(script, list(phones))] for phones in pronunciations]
 
-    def text_to_scripts(self, words: list[str]) -> list[list[str]]:
-        # Convert katakana to hiragana for unified lookup
-        hiragana_tokens = [_kata_to_hira(t) for t in words]
+    def _scripts_reading(self, scripts: tuple[str, ...]) -> G2PReading:
+        paths: list[G2PPath] = []
+        seen = set()
+        for parts in product(*(self.script_to_paths(script) for script in scripts)):
+            path = [group for part in parts for group in part]
+            key = tuple((group.script, tuple(group.phonemes)) for group in path)
+            if key not in seen:
+                seen.add(key)
+                paths.append(path)
+        return G2PReading(paths=paths)
 
-        # Kana -> romaji; long vowel U+30FC and handakuten U+309C are empty.
-        romaji_list: list[str] = []
-        for t in hiragana_tokens:
-            if t in ("ー", "゜"):
-                romaji_list.append("")
-                continue
-            r = _sokuon_script(t) if self._double_written_sokuon else None
-            romaji_list.append(r or _KANA_TO_ROMAJI.get(t, t))
+    def reading(self, text: str) -> G2PReading:
+        """Convert one complete kana reading, preserving dictionary alternatives."""
+        units = parse_kana(text, double_written_sokuon=self._double_written_sokuon)
+        return self._scripts_reading(tuple(script for unit in units for script in unit.scripts))
 
-        return [[r] for r in romaji_list]
+    def _convert(self, text: str) -> list[G2PWord]:
+        return [
+            G2PWord(text[unit.start:unit.end], readings=[self._scripts_reading(unit.scripts)])
+            for unit in parse_kana(text, double_written_sokuon=self._double_written_sokuon)
+        ]
 
+    def _convert_word(self, text: str) -> G2PWord | None:
+        return G2PWord(text, readings=[self.reading(text)]) if text else None
+
+    def _convert_readings(self, words: list[tuple[str, list[str]]]) -> list[G2PWord]:
+        """Convert backend candidates, joining only neighbors with kana dependencies."""
+        joined: list[tuple[str, list[str]]] = []
+        for surface, readings in words:
+            if not readings and not all(is_kana(char) for char in surface):
+                raise G2PConversionError([surface])
+            if joined:
+                previous, previous_readings = joined[-1]
+                pairs = list(product(previous_readings or [previous], readings or [surface]))
+                if any(
+                    unit.start < len(left) < unit.end
+                    for left, right in pairs
+                    for unit in parse_kana(left + right,
+                                           double_written_sokuon=self._double_written_sokuon)
+                ):
+                    joined[-1] = (
+                        previous + surface,
+                        list(dict.fromkeys(left + right for left, right in pairs)),
+                    )
+                    continue
+            joined.append((surface, readings))
+        result: list[G2PWord] = []
+        for surface, readings in joined:
+            if readings:
+                result.append(G2PWord(surface, readings=[self.reading(kana) for kana in readings]))
+            else:
+                result.extend(self._convert(surface))
+        return result
 
 def _is_japanese_char(char: str) -> bool:
     cp = ord(char)
@@ -284,75 +203,20 @@ class JapaneseMecabConverter(Converter):
             readings.append(pron)
         return readings
 
-    def _reading(self, kana: str) -> G2PReading:
-        kana_words = self._kana._convert(kana)
-        alternatives = [
-            [path for reading in word.readings for path in reading.paths]
-            for word in kana_words
-        ]
-        # Keep each candidate as a complete word path. Per-kana dictionary
-        # alternatives combine within this reading, not across readings.
-        paths = []
-        seen = set()
-        for parts in product(*alternatives):
-            path = [group for part in parts for group in part]
-            key = tuple((group.script, tuple(group.phonemes)) for group in path)
-            if key not in seen:
-                seen.add(key)
-                paths.append(path)
-        return G2PReading(paths=paths)
-
     def _convert_word(self, text: str) -> G2PWord | None:
         pronunciations = self._pronunciations(text)
         if pronunciations:
-            return G2PWord(text, readings=[self._reading(pron) for pron in pronunciations])
+            return G2PWord(text, readings=[self._kana.reading(pron) for pron in pronunciations])
         return compose_word(text, self._convert(text))
 
     def _convert(self, text: str) -> list[G2PWord]:
         if not text:
             return []
         # Snapshot surfaces before N-best calls replace MeCab's lattice.
-        surfaces: list[str] = []
-        for node in self._get_tagger()(text):
-            surface = node.surface
-            # Keep kana digraphs intact even if MeCab splits them.
-            if (
-                surfaces
-                and surface[0] in SMALL_KANA
-                and all(is_kana(char) for char in surfaces[-1] + surface)
-                and _kata_to_hira(surfaces[-1][-1] + surface[0]) in _KANA_TO_ROMAJI
-            ):
-                surfaces[-1] += surface
-            else:
-                surfaces.append(surface)
-
-        word_readings: list[tuple[str, list[str]]] = []
-        for surface in surfaces:
-            pronunciations = self._pronunciations(surface)
-            if not pronunciations and not all(is_kana(char) for char in surface):
-                raise G2PConversionError([surface])
-            if (
-                word_readings
-                and self._double_written_sokuon
-                and any(_kata_to_hira(pron).rstrip("ー゜").endswith("っ")
-                        for pron in (word_readings[-1][1] or [word_readings[-1][0]]))
-            ):
-                # Keep a combined sokuon dictionary key within one path choice.
-                previous, previous_readings = word_readings[-1]
-                word_readings[-1] = (
-                    previous + surface,
-                    list(dict.fromkeys(left + right for left, right in product(
-                        previous_readings or [previous], pronunciations or [surface],
-                    ))),
-                )
-            else:
-                word_readings.append((surface, pronunciations))
-        result: list[G2PWord] = []
-        for surface, pronunciations in word_readings:
-            if pronunciations:
-                result.append(G2PWord(
-                    text=surface, readings=[self._reading(pron) for pron in pronunciations],
-                ))
-            else:
-                result.extend(self._kana._convert(surface))
-        return result
+        surfaces = [node.surface for node in self._get_tagger()(text)]
+        surfaces = merge_kana_fragments(
+            surfaces, double_written_sokuon=self._double_written_sokuon,
+        )
+        return self._kana._convert_readings([
+            (surface, self._pronunciations(surface)) for surface in surfaces
+        ])
