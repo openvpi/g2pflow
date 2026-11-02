@@ -7,9 +7,10 @@ from g2pflow import (
     Language, Preprocessor,
 )
 from g2pflow.converters.base import resolve_language
+from g2pflow.converters.japanese import JapaneseKanaConverter
 from g2pflow.converters.simple import PassthroughConverter
 from g2pflow.preprocessors.simple import (
-    FilterPunctuation, LowercasePreprocessor, RemoveAccentsPreprocessor,
+    FilterPunctuation, LowercasePreprocessor, NormalizeUnicodePreprocessor, RemoveAccentsPreprocessor,
     StripWhitespacePreprocessor,
 )
 
@@ -248,3 +249,49 @@ def test_preprocessors_unicode_and_apostrophes():
     assert StripWhitespacePreprocessor().process([" ", " x "]) == ["x"]
     assert LowercasePreprocessor().process(["HELLO", "猫"]) == ["hello", "猫"]
     assert RemoveAccentsPreprocessor().process(["café résumé naïve"]) == ["cafe resume naive"]
+
+
+@pytest.mark.parametrize("form,text,expected", [
+    ("NFC", "cafe\u0301 か\u3099", "café が"),
+    ("NFD", "café が", "cafe\u0301 か\u3099"),
+    ("NFKC", "Ａ①ｶﾞ", "A1ガ"),
+    ("NFKD", "Ａ①ガ", "A1カ\u3099"),
+])
+def test_unicode_normalization_forms(form, text, expected):
+    processor = NormalizeUnicodePreprocessor(form)
+    assert processor.process(["", text, " x "]) == ["", expected, " x "]
+
+
+@pytest.mark.parametrize("form", ["nfc", "invalid"])
+def test_invalid_unicode_normalization_form(form):
+    with pytest.raises(ValueError, match="form"):
+        NormalizeUnicodePreprocessor(form)
+
+
+@pytest.mark.parametrize("raw,normalized,script,double_sokuon", [
+    ("か\u3099", "が", "ga", False), ("カ\u3099", "ガ", "ga", False),
+    ("ひ\u309a", "ぴ", "pi", False), ("ヒ\u309a", "ピ", "pi", False),
+    ("き\u3099ゃ", "ぎゃ", "gya", False), ("キ\u3099ャ", "ギャ", "gya", False),
+    ("っき\u3099ゃ", "っぎゃ", "ggya", True),
+    ("ワ\u3099", "ヷ", "va", False), ("ヰ\u3099", "ヸ", "vi", False),
+    ("ヱ\u3099", "ヹ", "ve", False), ("ヲ\u3099", "ヺ", "vo", False),
+])
+def test_unicode_preprocessing_before_kana_conversion(
+        dictionary, raw, normalized, script, double_sokuon):
+    converter = JapaneseKanaConverter(str(dictionary(f"{script}\tONSET VOWEL\n")),
+                                      double_written_sokuon=double_sokuon)
+    pipeline = G2PPipeline(preprocessors=[NormalizeUnicodePreprocessor()], converters=[converter])
+    words = pipeline.convert(raw)
+    assert len(words) == 1
+    assert words[0].text == normalized
+    assert words[0].readings == converter.convert(normalized)[0].readings
+    assert words[0].readings[0].paths == [[G2PGroup(script, ["ONSET", "VOWEL"])]]
+
+
+def test_unicode_preprocessing_preserves_fixed_word_text(dictionary):
+    converter = JapaneseKanaConverter(str(dictionary("gya\tGY A\n")))
+    pipeline = G2PPipeline(preprocessors=[NormalizeUnicodePreprocessor()], converters=[converter])
+    text = "き\u3099ゃ"
+    word = pipeline.convert_pfml(f'<word language="ja">{text}</word>')[0]
+    assert word.text == text
+    assert word.readings[0].paths == [[G2PGroup("gya", ["GY", "A"])]]

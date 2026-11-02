@@ -1,6 +1,5 @@
 """Japanese kana and MeCab G2P converters with shared pronunciation rules."""
 
-import unicodedata
 from itertools import product
 from pathlib import Path
 
@@ -79,37 +78,18 @@ _KANA_TO_ROMAJI: dict[str, str] = {
 _HIRAGANA_START = 0x3041
 _KATAKANA_START = 0x30A1
 _KATAKANA_END = 0x30F6
-_COMBINING_MARKS = frozenset("\u3099\u309a")
 
 
 def _kata_to_hira(text: str) -> str:
-    """Compose dakuten, then convert only katakana with hiragana equivalents."""
+    """Convert katakana with hiragana equivalents."""
     result: list[str] = []
-    for ch in unicodedata.normalize("NFC", text):
+    for ch in text:
         cp = ord(ch)
         if _KATAKANA_START <= cp <= _KATAKANA_END:
             result.append(chr(cp - _KATAKANA_START + _HIRAGANA_START))
         else:
             result.append({"ヽ": "ゝ", "ヾ": "ゞ"}.get(ch, ch))
     return "".join(result)
-
-
-def _compose_kana_with_offsets(text: str) -> tuple[str, list[int], list[int]]:
-    """Compose kana voicing marks for segmentation, retaining source spans."""
-    characters: list[str] = []
-    starts: list[int] = []
-    ends: list[int] = []
-    for index, char in enumerate(text):
-        if char in _COMBINING_MARKS and characters:
-            composed = unicodedata.normalize("NFC", characters[-1] + char)
-            if len(composed) == 1:
-                characters[-1] = composed
-                ends[-1] = index + 1
-                continue
-        characters.append(char)
-        starts.append(index)
-        ends.append(index + 1)
-    return "".join(characters), starts, ends
 
 
 _CONSONANT_LEADING = frozenset(
@@ -155,15 +135,7 @@ class JapaneseKanaConverter(PronunciationScriptDictionaryConverter):
         return find_run(text, is_kana)
 
     def _tokenize(self, text: str) -> list[str]:
-        normalized, raw_starts, raw_ends = _compose_kana_with_offsets(text)
-        words: list[str] = []
-        cursor = 0
-        for token in super()._tokenize(normalized):
-            if any(char in _COMBINING_MARKS for char in token):
-                raise KeyError(f"Unsupported kana voicing sequence {token!r}.")
-            start = normalized.index(token, cursor)
-            cursor = start + len(token)
-            words.append(text[raw_starts[start]:raw_ends[cursor - 1]])
+        words = super()._tokenize(text)
         if not self._double_written_sokuon:
             return words
         result: list[str] = []
@@ -300,7 +272,6 @@ class JapaneseMecabConverter(Converter):
         return self._tagger
 
     def _pronunciations(self, word: str) -> list[str]:
-        word = unicodedata.normalize("NFC", word)
         readings: list[str] = []
         seen: set[str] = set()
         for nodes in self._get_tagger().nbestToNodeList(word, self._nbest):
@@ -340,34 +311,26 @@ class JapaneseMecabConverter(Converter):
     def _convert(self, text: str) -> list[G2PWord]:
         if not text:
             return []
-        normalized, raw_starts, raw_ends = _compose_kana_with_offsets(text)
         # Snapshot surfaces before N-best calls replace MeCab's lattice.
-        surfaces: list[tuple[str, str]] = []
-        cursor = 0
-        for node in self._get_tagger()(normalized):
+        surfaces: list[str] = []
+        for node in self._get_tagger()(text):
             surface = node.surface
-            start = normalized.find(surface, cursor)
-            if start < 0:
-                raise ValueError(f"MeCab surface {surface!r} is not present in the input")
-            cursor = start + len(surface)
-            raw_surface = text[raw_starts[start]:raw_ends[cursor - 1]]
             # Keep kana digraphs intact even if MeCab splits them.
             if (
                 surfaces
                 and surface[0] in SMALL_KANA
-                and all(is_kana(char) for char in surfaces[-1][0] + surface)
-                and _kata_to_hira(surfaces[-1][0][-1] + surface[0]) in _KANA_TO_ROMAJI
+                and all(is_kana(char) for char in surfaces[-1] + surface)
+                and _kata_to_hira(surfaces[-1][-1] + surface[0]) in _KANA_TO_ROMAJI
             ):
-                previous, previous_raw = surfaces[-1]
-                surfaces[-1] = (previous + surface, previous_raw + raw_surface)
+                surfaces[-1] += surface
             else:
-                surfaces.append((surface, raw_surface))
+                surfaces.append(surface)
 
         word_readings: list[tuple[str, list[str]]] = []
-        for surface, raw_surface in surfaces:
+        for surface in surfaces:
             pronunciations = self._pronunciations(surface)
             if not pronunciations and not all(is_kana(char) for char in surface):
-                raise G2PConversionError([raw_surface])
+                raise G2PConversionError([surface])
             if (
                 word_readings
                 and self._double_written_sokuon
@@ -377,13 +340,13 @@ class JapaneseMecabConverter(Converter):
                 # Keep a combined sokuon dictionary key within one path choice.
                 previous, previous_readings = word_readings[-1]
                 word_readings[-1] = (
-                    previous + raw_surface,
+                    previous + surface,
                     list(dict.fromkeys(left + right for left, right in product(
-                        previous_readings or [previous], pronunciations or [raw_surface],
+                        previous_readings or [previous], pronunciations or [surface],
                     ))),
                 )
             else:
-                word_readings.append((raw_surface, pronunciations))
+                word_readings.append((surface, pronunciations))
         result: list[G2PWord] = []
         for surface, pronunciations in word_readings:
             if pronunciations:

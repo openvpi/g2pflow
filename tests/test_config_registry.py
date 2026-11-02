@@ -44,6 +44,7 @@ def test_builtin_components_are_discovered():
     }
     assert set(list_preprocessors()) == {
         "filter-punctuation", "lowercase", "strip-whitespace", "remove-accents",
+        "normalize-unicode",
     }
 
 
@@ -132,3 +133,14 @@ def test_factory_builds_pipeline_and_cwd_relative_resources(dictionary, monkeypa
     assert result[0].text == "hello"
     assert result[0].language == "en"
     assert result[0].readings[0].paths[0][0].phonemes == ["hh", "eh", "l", "ow"]
+
+
+def test_configured_unicode_normalization_runs_before_routing(dictionary):
+    path = dictionary("hello\tHH EH L OW\n")
+    config = G2PPipelineConfig.model_validate({
+        "preprocessors": [{"id": "normalize-unicode", "kwargs": {"form": "NFKC"}}],
+        "converters": [{"id": "dictionary", "kwargs": {"dict_path": str(path)}}],
+    })
+    word = build_pipeline_from_config(config).convert("ＨＥＬＬＯ")[0]
+    assert word.text == "HELLO"
+    assert word.readings[0].paths[0][0].phonemes == ["HH", "EH", "L", "OW"]

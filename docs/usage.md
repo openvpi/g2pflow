@@ -50,7 +50,9 @@ characters such as `<` and `&` literally. Both entry points apply the same routi
 preprocessing rules to automatic text. Empty or whitespace-only input returns
 `[]` without invoking preprocessors or requiring a converter.
 
-Global preprocessors transform `[text]` into fragments. Within each fragment,
+Global preprocessors transform `[text]` into fragments. `normalize-unicode`
+accepts `form="NFC"` (default), `"NFD"`, `"NFKC"`, or `"NFKD"` through `kwargs`.
+Within each fragment,
 the earliest range claimed by a higher-priority converter is reserved for that
 converter. Its left remainder goes to lower priorities; its right remainder
 continues at the same priority. Unclaimed non-whitespace text is collected in
@@ -98,10 +100,9 @@ bundled: the calling application controls its phoneme inventory. Unsupported
 script keys raise `KeyError`. Mandarin/Cantonese prefer phrase-context readings,
 then preserve other supported readings in order.
 
-Kana conversion composes voicing marks, keeps digraphs together, and maps
-hiragana and katakana to romaji dictionary keys. Output words preserve the
-input spelling. Long-vowel marks and standalone handakuten produce no phonemes
-and are omitted from output.
+Kana conversion keeps digraphs together and maps hiragana and katakana to
+romaji dictionary keys. Long-vowel marks and standalone handakuten produce no
+phonemes and are omitted from output.
 
 `double_written_sokuon=False` looks up a sokuon as `cl` separately from the
 following kana. With `True`, the sokuon and following consonant-leading kana

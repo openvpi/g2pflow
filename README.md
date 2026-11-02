@@ -102,8 +102,8 @@ not select candidates against audio or encode phones into model vocabulary IDs.
 | `japanese-mecab` | Japanese word segmentation and readings | Script-to-phone `dict_path`; optional `unidic_dir` |
 | `lstm` | Dictionary lookup and ONNX OOV inference | `model_path`; optional `dict_path` |
 
-Preprocessors: `filter-punctuation`, `strip-whitespace`, `lowercase`, and
-`remove-accents`.
+Preprocessors: `filter-punctuation`, `strip-whitespace`, `lowercase`,
+`normalize-unicode`, and `remove-accents`.
 
 Mandarin and Cantonese character/phrase reading data are bundled. The caller
 chooses the phoneme inventory through external pronunciation dictionaries.
