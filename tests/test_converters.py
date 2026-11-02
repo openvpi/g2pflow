@@ -205,3 +205,25 @@ def test_voiced_kana_variants_use_existing_dictionary_keys(dictionary, forms, sc
         assert len(words) == 1
         assert words[0].text == text
         assert words[0].readings[0].paths == [[G2PGroup(script, expected)]]
+
+
+@pytest.mark.parametrize("text,modern,script", [
+    ("ヷ", "ヴァ", "va"),
+    ("ヸ", "ヴィ", "vi"),
+    ("ヹ", "ヴェ", "ve"),
+    ("ヺ", "ヴォ", "vo"),
+])
+def test_voiced_katakana_dictionary_readings(
+        dictionary, text, modern, script):
+    converter = JapaneseKanaConverter(str(dictionary(f"{script}\tV VOWEL\n")))
+    expected = converter.convert(modern)[0].readings
+    words = converter.convert(text)
+    assert len(words) == 1
+    assert words[0].text == text
+    assert words[0].readings == expected
+
+
+def test_unsupported_kana_raises(dictionary):
+    converter = JapaneseKanaConverter(str(dictionary("ka\tK A\na\tA\n")))
+    with pytest.raises(KeyError):
+        converter.convert("\u3097")

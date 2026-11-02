@@ -8,6 +8,7 @@ import pytest
 
 from g2pflow import G2PConversionError, G2PGroup, G2PPipeline
 from g2pflow.converters.japanese import JapaneseMecabConverter
+from g2pflow.preprocessors.simple import NormalizeUnicodePreprocessor
 
 
 def node(surface, pron):
@@ -287,3 +288,38 @@ def test_pfml_fixed_word_composes_independent_internal_units(kana_dict):
     word = G2PPipeline(converters=[instance]).convert_pfml('<word language="ja">ねこ</word>')[0]
     assert word.text == "ねこ"
     assert [[g.script for g in p] for p in word.readings[0].paths] == [["ne", "ko"]]
+
+
+@pytest.mark.parametrize("has_readings", [True, False])
+def test_mecab_with_unicode_preprocessor(dictionary, has_readings):
+    instance = JapaneseMecabConverter(str(dictionary("ga\tG A\ngya\tGY A\n")))
+
+    class NormalizedTagger(TaggerDouble):
+        def __call__(self, text):
+            assert text == "がぎゃ"
+            return super().__call__(text)
+
+    analyses = ({"が": [[node("が", "ガ")]], "ぎゃ": [[node("ぎゃ", "ギャ")]]}
+                if has_readings else {})
+    instance._tagger = NormalizedTagger(["が", "ぎ", "ゃ"], analyses)
+    pipeline = G2PPipeline(preprocessors=[NormalizeUnicodePreprocessor()], converters=[instance])
+    words = pipeline.convert("か\u3099き\u3099ゃ")
+    assert [word.text for word in words] == ["が", "ぎゃ"]
+    assert [[g.script for g in word.readings[0].paths[0]] for word in words] == [["ga"], ["gya"]]
+
+
+def test_preprocessed_mecab_fixed_word(dictionary):
+    instance = JapaneseMecabConverter(str(dictionary("gya\tGY A\n")))
+    instance._tagger = TaggerDouble([], {"ぎゃ": [[node("ぎゃ", "ギャ")]]})
+    text = "き\u3099ゃ"
+    pipeline = G2PPipeline(preprocessors=[NormalizeUnicodePreprocessor()], converters=[instance])
+    word = pipeline.convert_pfml(f'<word language="ja">{text}</word>')[0]
+    assert word.text == text
+    assert word.readings[0].paths == [[G2PGroup("gya", ["GY", "A"])]]
+
+
+def test_mecab_unsupported_kana_raises(kana_dict):
+    instance = JapaneseMecabConverter(str(kana_dict))
+    instance._tagger = TaggerDouble(["\u3097"], {})
+    with pytest.raises(KeyError):
+        instance.convert("\u3097")

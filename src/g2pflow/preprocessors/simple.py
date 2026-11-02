@@ -39,6 +39,19 @@ class LowercasePreprocessor(Preprocessor):
         return [t.lower() for t in tokens]
 
 
+@preprocessor(id="normalize-unicode")
+class NormalizeUnicodePreprocessor(Preprocessor):
+    """Normalize tokens using NFC, NFD, NFKC, or NFKD."""
+
+    def __init__(self, form: str = "NFC") -> None:
+        if form not in ("NFC", "NFD", "NFKC", "NFKD"):
+            raise ValueError("form must be NFC, NFD, NFKC, or NFKD.")
+        self._form = form
+
+    def process(self, tokens: list[str]) -> list[str]:
+        return [unicodedata.normalize(self._form, token) for token in tokens]
+
+
 @preprocessor(id="strip-whitespace")
 class StripWhitespacePreprocessor(Preprocessor):
     """Strip leading and trailing whitespace from tokens, removing empty ones."""

@@ -98,9 +98,10 @@ bundled: the calling application controls its phoneme inventory. Unsupported
 script keys raise `KeyError`. Mandarin/Cantonese prefer phrase-context readings,
 then preserve other supported readings in order.
 
-Kana conversion keeps digraphs together, normalizes katakana to hiragana, and
-maps through the romaji table. Long-vowel marks and the standalone handakuten
-produce no standalone phonemes and are omitted from output.
+Kana conversion keeps digraphs together and maps hiragana and katakana to
+romaji dictionary keys. Long-vowel marks and standalone handakuten produce no
+phonemes and are omitted from output.
+
 `double_written_sokuon=False` looks up a sokuon as `cl` separately from the
 following kana. With `True`, the sokuon and following consonant-leading kana
 form one pronunciation unit and use a combined dictionary key: for example,

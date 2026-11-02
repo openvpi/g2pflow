@@ -86,7 +86,7 @@ import g2pflow
 from g2pflow import G2PPipelineConfig, build_pipeline_from_config, register_plugin_paths
 assert Path(g2pflow.__file__).is_relative_to(Path(sys.prefix))
 assert len(g2pflow.list_converters()) == 8
-assert len(g2pflow.list_preprocessors()) == 4
+assert len(g2pflow.list_preprocessors()) == 5
 for name in ('numpy', 'filelock', 'torch', 'lightning', 'onnxruntime', 'fugashi', 'unidic'):
     assert importlib.util.find_spec(name) is None, name
     assert name not in sys.modules, name
