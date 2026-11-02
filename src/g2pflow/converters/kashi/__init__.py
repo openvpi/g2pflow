@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import os
 import shutil
-import unicodedata
 import urllib.request
 from itertools import product
 from pathlib import Path
@@ -16,7 +15,7 @@ from ...registry import converter
 from ..base import (Converter, G2PConversionError, G2PReading, G2PWord,
                     compose_word)
 from ..japanese import JapaneseKanaConverter, _is_japanese_char
-from .lexicon import hira, normalize_surface
+from .lexicon import hira
 from .segmentation import UnidicSegmenter
 from ..text import find_run, is_kana
 
@@ -31,7 +30,6 @@ def _default_cache_dir() -> Path:
     return Path(os.environ.get("G2PFLOW_CACHE_DIR", "")) \
         if os.environ.get("G2PFLOW_CACHE_DIR") \
         else Path.home() / ".cache" / "g2pflow"
-
 
 
 _REQUIRED_MODEL_INPUTS = frozenset({
@@ -50,7 +48,7 @@ def _model_inputs(path: Path) -> frozenset[str] | None:
     try:
         session = ort.InferenceSession(str(path),
                                        providers=["CPUExecutionProvider"])
-    except Exception:  # noqa: BLE001 - truncated/corrupt cache entry
+    except Exception:
         return None
     return frozenset(item.name for item in session.get_inputs())
 
@@ -123,29 +121,6 @@ def _download(url: str, path: Path, *, attempts: int = 3) -> None:
 
 def _kana_only(text: str) -> bool:
     return bool(text) and all(is_kana(ch) or ch == "ー" for ch in text)
-
-
-def _normalize_with_offsets(text: str) -> tuple[str, list[int], list[int]]:
-    """NFKC the run and remember each normalized char's source span.
-
-    Combining marks stay with their base character.
-    """
-    normalized: list[str] = []
-    starts: list[int] = []
-    ends: list[int] = []
-    index = 0
-    while index < len(text):
-        end = index + 1
-        while end < len(text) and (
-                unicodedata.combining(text[end])
-                or text[end] in "\u3099\u309a"):
-            end += 1
-        for char in normalize_surface(text[index:end]):
-            normalized.append(char)
-            starts.append(index)
-            ends.append(end)
-        index = end
-    return "".join(normalized), starts, ends
 
 
 @converter(id="japanese-kashi", language="ja,jpn")
@@ -319,29 +294,17 @@ class JapaneseKashiConverter(Converter):
     def _convert(self, text: str) -> list[G2PWord]:
         if not text:
             return []
-        normalized, raw_starts, raw_ends = _normalize_with_offsets(text)
-        if not normalized:
-            return []
-        segments = self._get_segmenter().segment(normalized)
+        segments = self._get_segmenter().segment(text)
         info = {segment.start: segment for segment in segments}
         result = []
-        last_raw_end = 0
         for word in self._get_runtime().predict_words(
-                normalized, segments, beam_size=self._beam_size):
+                text, segments, beam_size=self._beam_size):
             start, end = word["start"], word["end"]
-            raw_start = raw_starts[start]
-            raw_end = raw_ends[end - 1]
-            if raw_start < last_raw_end:
-                # Keep normalized text when one source char became several.
-                surface_text = normalized[start:end]
-            else:
-                surface_text = text[raw_start:raw_end]
-                last_raw_end = raw_end
+            surface_text = text[start:end]
             segment = info.get(start)
             surface = word["surface"]
             if all(is_kana(ch) for ch in surface):
-                # Kana words take UniDic's contextual pron (は->ワ); the
-                # literal reading stays available as a second candidate.
+                # Kana words take UniDic's contextual pron (は->ワ).
                 result.append(G2PWord(
                     text=surface_text,
                     readings=self._kana_readings(
@@ -359,10 +322,7 @@ class JapaneseKashiConverter(Converter):
         """Convert a caller-fixed word as one unit, like japanese-mecab."""
         if not text:
             return None
-        normalized, _starts, _ends = _normalize_with_offsets(text)
-        if not normalized:
-            return None
-        prons = self._get_segmenter().whole_word_readings(normalized)
+        prons = self._get_segmenter().whole_word_readings(text)
         readings = []
         for pron in prons:
             try:
@@ -371,5 +331,5 @@ class JapaneseKashiConverter(Converter):
                 continue
         if not readings:
             # Same fallback as japanese-mecab when no whole word exists.
-            return compose_word(text, self._convert(normalized))
+            return compose_word(text, self._convert(text))
         return G2PWord(text=text, readings=readings)

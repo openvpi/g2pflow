@@ -419,7 +419,8 @@ def test_getstate_drops_native_handles(kashi_converter):
     assert state["_segmenter"] is None
 
 
-def test_combining_mark_keeps_raw_offsets(dictionary, tmp_path):
+def test_converter_returns_input_text_verbatim(dictionary, tmp_path):
+    """Normalization belongs to a preprocessor, not to the converter."""
     model = tmp_path / "model.onnx"
     lexicon = tmp_path / "lexicon.txz"
     model.write_bytes(b"stub")
@@ -431,8 +432,32 @@ def test_combining_mark_keeps_raw_offsets(dictionary, tmp_path):
         {"が学校": [(0, 1, "が"), (1, 3, "学校")]})
     converter._runtime = _FakeRuntime(
         {"が学校": [("が", ["が"]), ("学校", ["がっこう"])]})
-    words = converter.convert("か\u3099学校")
-    assert [word.text for word in words] == ["か\u3099", "学校"]
+    words = converter.convert("が学校")
+    assert [word.text for word in words] == ["が", "学校"]
+
+
+def test_unicode_preprocessor_normalizes_before_the_converter(
+        dictionary, tmp_path):
+    """The decomposed input reaches the converter already composed."""
+    from g2pflow import G2PPipeline
+    from g2pflow.preprocessors.simple import NormalizeUnicodePreprocessor
+
+    model = tmp_path / "model.onnx"
+    lexicon = tmp_path / "lexicon.txz"
+    model.write_bytes(b"stub")
+    lexicon.write_bytes(b"stub")
+    table = dictionary("ga\tg a\ncl\tcl\nko\tk o\nu\tu\n", "norm.txt")
+    converter = JapaneseKashiConverter(str(table), model_path=str(model),
+                                       lexicon_path=str(lexicon))
+    converter._segmenter = _FakeSegmenter(
+        {"が学校": [(0, 1, "が"), (1, 3, "学校")]})
+    converter._runtime = _FakeRuntime(
+        {"が学校": [("が", ["が"]), ("学校", ["がっこう"])]})
+    pipeline = G2PPipeline(
+        converters=[converter],
+        preprocessors=[NormalizeUnicodePreprocessor("NFC")])
+    words = pipeline.convert("が学校".replace("が", "か\u3099"))
+    assert [word.text for word in words] == ["が", "学校"]
 
 
 def test_pipeline_config_integration(kana_dict, tmp_path):

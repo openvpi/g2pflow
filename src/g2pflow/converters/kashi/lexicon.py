@@ -1,20 +1,14 @@
-"""Candidate reading lattice: normalization, edges, lexicon pack and filters."""
+"""Candidate reading lattice: edges, lexicon pack and filters."""
 
 import re
 import unicodedata
 
 from .constants import MAX_EDGES, MAX_SPAN_READINGS, MAX_SURFACE_LEN
 
-# ---------------------------------------------------------------- normalization
-
 KANJI_RE = re.compile(
     r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff"
     r"\U00020000-\U0002fa1f々〆ヶ]"
 )
-
-
-def normalize_surface(text: str) -> str:
-    return unicodedata.normalize("NFKC", text).replace("|", "")
 
 
 def hira(text: str) -> str:
@@ -41,9 +35,6 @@ def _char_type(char: str) -> int:
     if char.isdigit():
         return 5
     return 6
-
-
-# ---------------------------------------------------------------- edges
 
 
 class Edge:
@@ -86,9 +77,6 @@ _WORD_SOURCES = frozenset({"jmdict", "unidic", "yomogi_dict", "pyopenjtalk"})
 _PUNCT_OR_SPACE = frozenset(" \t\r\n、。！？!?…・~～-—")
 
 
-# ---------------------------------------------------------------- lexicon pack
-
-
 class UnifiedLexicon:
     """Port of UnifiedLexiconProvider (pack + rules + prefix scan)."""
 
@@ -108,7 +96,6 @@ class UnifiedLexicon:
         return [(r, src, p, c)]
 
     def build(self, text: str) -> list[Edge]:
-        text = normalize_surface(text)
         n = len(text)
         edges: list[Edge] = []
         seen: set[tuple[int, int, str]] = set()
@@ -161,9 +148,6 @@ class UnifiedLexicon:
 def copy_edges(text: str) -> list[Edge]:
     return [Edge(i, i + 1, ch, ch, "copy", prior=-1.0)
             for i, ch in enumerate(text)]
-
-
-# ------------------------------------------------- composite provider chain
 
 
 def _rank(edge: Edge) -> tuple[int, float, float]:
@@ -364,7 +348,6 @@ def prune(edges: list[Edge], text: str) -> list[Edge]:
 
 
 def build_edges(text: str, lexicon: UnifiedLexicon) -> list[Edge]:
-    text = normalize_surface(text)
     edges = lexicon.build(text)
     edges = expand_word_variants(edges, text)
     unique: dict[tuple, Edge] = {}

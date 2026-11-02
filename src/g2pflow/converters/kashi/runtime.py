@@ -23,15 +23,11 @@ from .lexicon import (
     _char_type,
     build_edges,
     hira,
-    normalize_surface,
 )
 
 _BUNDLE_MAGIC = "##kashi-g2p v1"
 _BUNDLE_SECTION = "##section "
 _BUNDLE_END = "##end"
-
-
-# ---------------------------------------------------------------- windows
 
 
 def windows_from_segments(segments, length: int) -> list[tuple[int, int]]:
@@ -130,9 +126,6 @@ def local_edges(text: str, edges: list[Edge], start: int, end: int) -> list[Edge
     if not result:
         raise ValueError("no edges for a safe window")
     return result
-
-
-# ---------------------------------------------------------------- runtime
 
 
 def _load_bundle(bundle_path: Path):
@@ -257,7 +250,6 @@ class G2POnnxRuntime:
         Candidates are the top ``beam_size`` paths through each segment's
         sub-lattice, ranked by the in-context model score.
         """
-        text = normalize_surface(text)
         if not text:
             return []
         # One graph per fixed-word window: a global graph can exceed MAX_EDGES.
