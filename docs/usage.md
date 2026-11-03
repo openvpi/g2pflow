@@ -24,12 +24,29 @@ words = pipeline.convert("Hello world", languages=["en"])
 
 The corresponding single-component factories are
 `build_preprocessor_from_config()` and `build_converter_from_config()`.
-All three factories accept `root_path`. Every string beginning with `@` inside
+The factories accept `root_path`. Every string beginning with `@` inside
 kwargs (including nested lists and dictionaries) is resolved against that root.
 Ordinary relative paths remain relative to the current working directory.
 The input configuration is not mutated.
 
 YAML users can pass their loader's resulting dictionary to `model_validate()`.
+
+## Components and resources
+
+| Converter ID | Purpose | Caller-supplied resources |
+| --- | --- | --- |
+| `dictionary` | Word-to-phoneme dictionary | `dict_path` |
+| `characters` | Character-to-phoneme mapping | `mapping` |
+| `passthrough` | Return each token as its own phone | None |
+| `chinese-pinyin` | Mandarin text through pinyin | Script-to-phone `dict_path` |
+| `yue-jyutping` | Cantonese text through jyutping | Script-to-phone `dict_path` |
+| `japanese-kana` | Kana through romaji | Script-to-phone `dict_path` |
+| `japanese-mecab` | Japanese word segmentation and readings | Script-to-phone `dict_path`; optional `unidic_dir` |
+| `japanese-kashi` | Japanese readings through kashi-g2p | Script-to-phone `dict_path`; optional `model_path`, `lexicon_path`, `unidic_dir` |
+| `lstm` | Dictionary lookup and ONNX OOV inference | `model_path`; optional `dict_path` |
+
+Preprocessors: `filter-punctuation`, `strip-whitespace`, `lowercase`,
+`normalize-unicode`, and `remove-accents`.
 
 ## Routing and languages
 
@@ -94,7 +111,8 @@ Mandarin, Cantonese and Kana converters take a required `dict_path` mapping
 pinyin, jyutping or romaji to the desired phonemes. Those mappings are not
 bundled: the calling application controls its phoneme inventory. Unsupported
 script keys raise `KeyError`. Mandarin/Cantonese prefer phrase-context readings,
-then preserve other supported readings in order.
+then preserve other supported readings in order. Their character and phrase
+reading data are bundled with the package.
 
 Kana conversion keeps digraphs together and maps hiragana and katakana to
 romaji dictionary keys. Long-vowel marks and standalone handakuten produce no
@@ -115,7 +133,7 @@ raises `KeyError` instead of falling back to separate keys or guessed phonemes.
 
 ## Japanese MeCab and UniDic
 
-The base installation includes fugashi, UniDic and filelock. `japanese-mecab` accepts
+`japanese-mecab` accepts
 `dict_path`, `nbest=32`, `double_written_sokuon=False` and `unidic_dir=None`.
 MeCab supplies word boundaries and UniDic readings; the shared Kana converter
 maps their pronunciations to dictionary paths. `nbest` controls how many UniDic
@@ -136,7 +154,7 @@ non-Kana words raise `G2PConversionError`.
 
 ## kashi-g2p (Japanese)
 
-Install `g2pflow[all]` for NumPy and ONNX Runtime. `japanese-kashi` accepts `dict_path`, `model_path=None`,
+Install `g2pflow[all]` for neural inference. `japanese-kashi` accepts `dict_path`, `model_path=None`,
 `lexicon_path=None`, `cache_dir=None`, `prefer_dml=False`, `beam_size=16`
 and `unidic_dir=None`. UniDic determines word boundaries; the model scores
 candidate readings within each word using sentence context. The shared Kana
@@ -153,20 +171,20 @@ downloaded from the kashi-g2p release into a versioned directory under
 uses the same directory and download options described above.
 Set `prefer_dml=True` to use DirectML when available on Windows.
 
-Both Japanese reading backends claim Japanese-script runs. Use other converters
+Japanese reading converters claim Japanese-script runs. Use other converters
 for Latin text and digits in mixed input, and preprocess punctuation as needed.
 
 ## LSTM ONNX inference
 
-Install `g2pflow[all]` for NumPy and ONNX Runtime. The converter accepts `model_path`, `dict_path=None`,
+Install `g2pflow[all]` for neural inference. The converter accepts `model_path`, `dict_path=None`,
 and `beam_size=16`. Its model directory must contain `encoder.onnx`,
 `decoder.onnx`, `char.json` and `phonemes.json`, in the
 [LstmG2p](https://github.com/wolfgitpr/LstmG2p) format. No model is bundled or
 automatically downloaded.
 
-Vocabulary JSON is read during construction. NumPy and ONNX Runtime are loaded
-only on the first OOV inference, when native sessions are created. Dictionary
-hits work without either optional package. Beam
+Vocabulary JSON is read during construction. Inference resources are loaded
+on the first OOV inference. Dictionary hits work without the optional runtime
+dependencies. Beam
 results are ordered by mean log probability including EOS in the length, with
 special tokens removed and duplicate phone sequences collapsed in rank order.
 Use `beam_size=1` for greedy decoding. Native sessions and MeCab taggers are

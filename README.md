@@ -10,7 +10,7 @@ can be combined in priority order for mixed-language text.
 
 ```shell
 pip install g2pflow
-pip install "g2pflow[all]"   # Neural inference for kashi-g2p and LSTM converters
+pip install "g2pflow[all]"  # Include optional runtime dependencies
 ```
 
 From a checkout, install with `pip install -e .` or `pip install -e ".[all,dev]"`.
@@ -40,8 +40,8 @@ assert word.readings[0].paths[0][0].phonemes == ["HH", "AY"]
 ```
 
 `G2PPipeline` also accepts preprocessor and converter instances directly.
-Configuration is validated by independent Pydantic models; there is no YAML
-loader, training configuration system or command-line interface.
+Configuration models validate Python dictionaries. See
+[configuration and construction](docs/usage.md#configuration-and-construction).
 
 ## PFML markup
 
@@ -87,26 +87,10 @@ not select candidates against audio or encode phones into model vocabulary IDs.
 
 ## Components and resources
 
-| Converter ID | Purpose | Caller-supplied resources |
-| --- | --- | --- |
-| `dictionary` | Word-to-phoneme dictionary | `dict_path` |
-| `characters` | Character-to-phoneme mapping | `mapping` |
-| `passthrough` | Return each token as its own phone | None |
-| `chinese-pinyin` | Mandarin text through pinyin | Script-to-phone `dict_path` |
-| `yue-jyutping` | Cantonese text through jyutping | Script-to-phone `dict_path` |
-| `japanese-kana` | Kana through romaji | Script-to-phone `dict_path` |
-| `japanese-mecab` | Japanese word segmentation and readings | Script-to-phone `dict_path`; optional `unidic_dir` |
-| `japanese-kashi` | Japanese readings through kashi-g2p | Script-to-phone `dict_path`; optional `model_path`, `lexicon_path`, `unidic_dir` |
-| `lstm` | Dictionary lookup and ONNX OOV inference | `model_path`; optional `dict_path` |
-
-Preprocessors: `filter-punctuation`, `strip-whitespace`, `lowercase`,
-`normalize-unicode`, and `remove-accents`.
-
-Mandarin and Cantonese character/phrase reading data are bundled. The caller
-chooses the phoneme inventory through external pronunciation dictionaries.
-English ONNX models are external. Japanese backends can download UniDic and
-kashi-g2p resources on first use or load caller-supplied files. See
-[resources and converter details](docs/usage.md).
+Converters determine word boundaries and readings. Pronunciation dictionaries
+let the caller choose the phoneme inventory. See the
+[component and resource reference](docs/usage.md#components-and-resources)
+for converter IDs, preprocessors, resource requirements and download options.
 
 ## External plugins
 

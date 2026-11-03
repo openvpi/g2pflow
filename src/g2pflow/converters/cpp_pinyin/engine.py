@@ -1,8 +1,4 @@
-"""Faithful port of cpp-pinyin EngineImpl core G2P algorithm.
-
-Contains the exact queryRaw() sliding-window phrase-disambiguation logic,
-including all four search directions per length.
-"""
+"""Sliding-window phrase disambiguation adapted from cpp-pinyin's EngineImpl."""
 
 
 from pathlib import Path
@@ -19,10 +15,9 @@ from .tones import apply_tone, STYLE_TONE3
 
 
 class PinyinEngine:
-    """Port of cpp-pinyin EngineImpl.
+    """Resolve character readings using phrase context and pronunciation dictionaries.
 
-    Loads the original colon-separated dictionary format and runs the
-    identical queryRaw() sliding-window disambiguation algorithm.
+    Dictionaries use the colon-separated cpp-pinyin format.
     """
 
     def __init__(self, dict_dir: str | Path | None = None) -> None:
@@ -62,14 +57,14 @@ class PinyinEngine:
         return bool(self._words)
 
     # ------------------------------------------------------------------
-    # Core: faithful port of EngineImpl::queryRaw()
+    # Phrase disambiguation
     # ------------------------------------------------------------------
 
     def query_raw(self, chars: list[str], *,
                   style: int = STYLE_TONE3,
                   v_to_u: bool = False,
                   neutral_tone5: bool = True) -> list[list[str]]:
-        """Port of EngineImpl::queryRaw().
+        """Resolve readings from phrase context, falling back to dictionary defaults.
 
         Args:
             chars: List of CJK character strings (may include non-CJK).
@@ -78,7 +73,7 @@ class PinyinEngine:
             neutral_tone5: Whether to append '5' for neutral tone.
 
         Returns:
-            list[list[str]]  --  one phoneme list per input char, in order.
+            One list of readings per input character, in order.
         """
         result: list[list[str]] = []
         cursor = 0
@@ -106,7 +101,6 @@ class PinyinEngine:
             # ---- Polyphonic  --  sliding-window phrase matching ----
             found = False
 
-            # Closure matching cpp-pinyin's emitPhrase lambda
             def _emit(key_str: str, result_idx: int,
                       advance: int, pop_last: bool) -> bool:
                 nonlocal found, cursor
@@ -176,7 +170,7 @@ class PinyinEngine:
         return result
 
     # ------------------------------------------------------------------
-    # Helpers mirroring cpp-pinyin's EngineImpl
+    # Character conversion and dictionary readings
     # ------------------------------------------------------------------
 
     def _to_simplified(self, ch: str) -> str:
@@ -193,7 +187,7 @@ class PinyinEngine:
     def readings(self, ch: str, *, style: int = STYLE_TONE3,
                  v_to_u: bool = False,
                  neutral_tone5: bool = True) -> list[str]:
-        """All possible readings for a character, tone-converted."""
+        """Return a character's dictionary readings in the requested tone style."""
         candidates = self._words.get(self._to_simplified(ch))
         if not candidates:
             return [ch]

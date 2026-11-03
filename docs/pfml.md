@@ -3,8 +3,7 @@
 PFML (Pronunciation Flow Markup Language) is an XML-based input and interchange
 format for g2pflow. It specifies language scopes, fixed word boundaries, and
 complete pronunciation candidate trees. The suggested extension is `.pfml`.
-This document defines version 1.0; the parser and `tests/test_pfml.py` implement
-its content model and conformance examples.
+This document defines the version 1.0 content model.
 
 See the [tag reference](#tag-reference) for each element's attributes, allowed
 contents, placement and examples.
@@ -100,7 +99,7 @@ parses PFML, including text-only fragments.
 
 ## Tag reference
 
-PFML 1.0 supports the following six elements. Authoring and serialization share
+PFML 1.0 supports the following elements. Authoring and serialization share
 one content model.
 
 | Element | Purpose | Attributes |
@@ -131,7 +130,7 @@ against a dictionary or model inventory.
 
 **Placement:** at fragment level or inside another `scope`.
 
-**Contents:** ordinary text and any of the six supported elements, in order.
+**Contents:** ordinary text and supported elements, in order.
 An empty scope is allowed and produces no words.
 
 | Attribute | Required | Meaning and default |
@@ -499,9 +498,7 @@ words or a wholly silent result become `None`; multiple words raise
 ordinary segmentation cannot respect the requested unit. Fixed-word
 preprocessors may remove a unit but may not split it into multiple fragments.
 
-Dictionary/lexicon converters look up the complete unit. Character converters
-process every character in it. Mandarin/Cantonese/Kana converters combine their
-independent internal units into a word, keeping reading combinations outside
-path combinations. MeCab first tries whole-unit readings, then composes its
-ordinary internally segmented units. This composition is implemented by those
-backends, not used as a generic fallback for arbitrary plugins.
+A backend may look up a fixed word as a whole or compose independently pronounced
+internal units, preserving the reading/path nesting. Such composition belongs
+to the converter; the pipeline does not merge arbitrary plugin outputs to
+repair a violated word boundary.

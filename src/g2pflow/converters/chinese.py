@@ -1,8 +1,6 @@
-"""Mandarin and Cantonese G2P converters  --  delegate to the cpp-pinyin engine.
+"""Convert Mandarin and Cantonese readings using a supplied phoneme dictionary.
 
-Both derive from ``PronunciationScriptDictionaryConverter``: hanzi -> pinyin/jyutping
-(text-to-script, via the cpp-pinyin engine) then pinyin/jyutping -> phonemes
-(script-to-phonemes, via dictionary lookup when *dict_path* is given).
+Character and phrase readings come from the bundled cpp-pinyin data.
 """
 
 

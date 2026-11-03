@@ -259,8 +259,7 @@ class JapaneseMecabConverter(JapaneseReadingConverter):
         self._tagger = None
 
     def __getstate__(self):
-        # Binarization and data loaders use spawned worker processes. MeCab's
-        # native tagger cannot be pickled; each worker creates its own instance.
+        # MeCab's native tagger cannot be pickled; each worker creates its own instance.
         state = self.__dict__.copy()
         state["_tagger"] = None
         return state

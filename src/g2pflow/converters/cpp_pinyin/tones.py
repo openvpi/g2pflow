@@ -1,4 +1,4 @@
-"""Faithful port of cpp-pinyin ManTone / CanTone tone conversion.
+"""Tone conversion adapted from cpp-pinyin's ManTone and CanTone.
 
 Handles both Mandarin (tone-mark input) and Cantonese (TONE3 input)
 pronunciations.
@@ -65,7 +65,7 @@ def _pinyin_to_bopomofo(pinyin: str, tone: int) -> str:
 
 def apply_tone(pinyin: str, style: int, *, v_to_u: bool = False,
                neutral_tone5: bool = True) -> str:
-    """Apply tone conversion, faithfully mirroring cpp-pinyin's logic.
+    """Convert a syllable to the requested tone style.
 
     Handles both input formats:
     - Tone-marked syllables (Mandarin)

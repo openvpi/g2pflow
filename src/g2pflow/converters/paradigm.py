@@ -7,13 +7,10 @@ from .text import split_words
 
 
 class LexiconConverter(Converter, ABC):
-    """Converter for languages where the writing system doubles as the
-    pronunciation script (most alphabetical languages).
+    """Pronunciation-dictionary lookup with a subclass-defined OOV fallback.
 
-    Known words are looked up in a pronunciation dictionary loaded from
-    *dict_path*.  Out-of-vocabulary words are handled by
-    ``_infer_oov``, which subclasses implement with language-specific
-    letter-to-sound rules.
+    Known words are read from *dict_path* when supplied. Subclasses implement
+    ``infer_oov`` to return pronunciations for missing words.
     """
 
     def __init__(self, dict_path: str | None = None) -> None:

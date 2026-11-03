@@ -1,18 +1,16 @@
 # Development and validation
 
-Use a separate Python 3.10+ environment and install the checkout:
+Use a separate Python environment compatible with `requires-python` in
+[pyproject.toml](../pyproject.toml) and install the checkout:
 
 ```shell
 pip install -e ".[dev]"
 pytest --cov=g2pflow --cov-report=term-missing --cov-report=xml
 ```
 
-The default suite is offline. Small handwritten dictionaries and deterministic
-backend doubles exercise routing, configuration, plugin discovery, candidate
-structure, resource caching and model decoding. Plugin tests include a
-real `spawn` process. Tests write their fixtures into pytest's temporary folders.
-The `dev` extra includes NumPy to exercise numerical code. Distribution
-tests separately verify base installations and installations with the `all` extra.
+The default suite runs offline with temporary fixtures and deterministic backend
+doubles. Real-resource integration tests and distribution tests are explicit
+opt-ins.
 
 ## Real-resource integration tests
 
@@ -29,30 +27,21 @@ Install `g2pflow[all]` and set these environment variables:
 pytest --run-integration -m integration
 ```
 
-These explicitly requested tests fail if resources are absent, and never
-download them during the test. They check the reference pronunciation mappings
-and model outputs, plus serialization after native initialization.
+These explicitly requested tests fail if resources are absent and never
+download them during the test.
 Regular tests do not depend on these files.
-
-PFML conformance and round-trip checks run in the default offline suite. They
-cover language scopes, fixed converter boundaries, lower-level shorthand,
-complete multi-candidate trees, malformed/incomplete markup, silent-branch
-filtering, and lossless serialization of successful outputs and language markers.
-They also cover normalization through the framework's public converter entry
-points. Randomized tree fixtures use a fixed seed and require no extra testing
-dependency.
 
 ## Build and validate distributions
 
 ```shell
 python -m build
 python -m twine check dist/*
-python -m pip wheel --wheel-dir wheelhouse "dist/g2pflow-0.3.1-py3-none-any.whl[all]" "setuptools>=77.0.3" wheel
+python -m pip wheel --wheel-dir wheelhouse ".[all]" setuptools wheel
 pytest --run-distribution -m distribution
 ```
 
 Preparing `wheelhouse` downloads dependencies and builds wheels for packages
-distributed as source archives, including UniDic. Distribution
+distributed as source archives. Distribution
 tests then use `--no-index` behavior to install into fresh environments and
 rebuild the wheel from the sdist. They verify dependencies, packaged resources,
 licensing files, standalone operation and external plugins outside the checkout.
@@ -64,12 +53,9 @@ and one sdist version in the artifact directory for this validation.
 
 ## CI
 
-GitHub Actions runs the offline suite on Ubuntu with Python 3.10 through 3.14,
-and on Windows and macOS with Python 3.10 and 3.14. A separate Python 3.12 job
-installs the `all` extra and runs the suite without downloading models or
-UniDic. A distribution job builds wheel/sdist, checks metadata, prepares dependency
-wheels and exercises clean installations. Coverage reports and distribution
-archives are uploaded as workflow artifacts.
+The [test workflow](../.github/workflows/tests.yml) defines the platform and
+Python-version matrix, dependency installation, checks and uploaded artifacts.
+Tests run without downloading dictionaries or models.
 
 The test workflow runs for branch pushes, pull requests and manual dispatches.
 It is also reusable by the release workflow, which tests the release's tagged
@@ -101,15 +87,15 @@ publisher under that project's publishing settings.
 
 1. Update `project.version` in `pyproject.toml`, commit and push the change.
 2. Open https://github.com/openvpi/g2pflow/releases/new and create a tag matching
-   the package version exactly, prefixed with `v`, on the intended commit.
-   For version `0.3.1`, use the tag `v0.3.1`.
+   `project.version` from `pyproject.toml` exactly, prefixed with `v`, on the
+   intended commit.
 3. Publish the GitHub Release. A saved draft does not publish to PyPI.
 4. The `Publish to PyPI` workflow validates the tag, runs the complete test and
    build workflow on that tagged commit, then uploads its wheel and sdist.
 5. Check the completed workflow and https://pypi.org/project/g2pflow/.
 
-Both published releases and published prereleases trigger this workflow; use a
-matching package version such as `0.3.1rc1` and tag `v0.3.1rc1` for prereleases.
+Both published releases and published prereleases trigger this workflow. For
+prereleases, include the prerelease suffix from `project.version` in the tag.
 Uploading uses the artifacts from the successful checks in that same run and
 does not rebuild them in the publishing job. Only the publishing job has the
 OIDC permission. PyPI does not allow replacing an already uploaded file; publish

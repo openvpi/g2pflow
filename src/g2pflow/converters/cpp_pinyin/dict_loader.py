@@ -1,4 +1,4 @@
-"""Faithful port of cpp-pinyin DictUtil dictionary loading.
+"""Dictionary loaders adapted from cpp-pinyin's DictUtil.
 
 Handles the original colon-separated dictionary format:
   word.txt:       char:pron1,pron2,pron3
@@ -13,7 +13,7 @@ from pathlib import Path
 
 
 def encode_phrase_key(chars: list[str]) -> int:
-    """64-bit phrase key encoding matching cpp-pinyin's encodePhrasesKey().
+    """Phrase key encoding adapted from cpp-pinyin's encodePhrasesKey().
 
     Packs 2-4 char16 values into a 64-bit integer.
     """

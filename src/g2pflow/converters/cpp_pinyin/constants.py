@@ -1,6 +1,6 @@
-"""Faithful port of cpp-pinyin character classifications and tone tables."""
+"""Character classifications and tone tables adapted from cpp-pinyin."""
 
-# Hanzi ranges matching cpp-pinyin G2pglobal.h isHanzi()
+# Hanzi ranges adapted from cpp-pinyin's G2pglobal.h.
 HAN_RANGES = [
     (0x4E00, 0x9FA5),
 ]
@@ -20,13 +20,13 @@ CJK_RANGES = [
     (0xFF00, 0xFFEF),
 ]
 
-# Special kana characters recognized by cpp-pinyin
+# Special kana characters from cpp-pinyin.
 SPECIAL_KANA = frozenset(
     "ャュョゃゅょァィゥェォぁぃぅぇぉ"
 )
 
 # ---- Tone mark -> (base char, tone digit) ----
-# Covers the exact same set as ManTone.cpp tone_map
+# Adapted from cpp-pinyin's ManTone.cpp tone_map.
 TONE_MAP: dict[int, tuple[str, str]] = {}
 
 # Initialize TONE_MAP for the range U+00E0..U+01DC + a few extras
@@ -52,7 +52,7 @@ _tone_data = [
 for cp, base, tone in _tone_data:
     TONE_MAP[cp] = (base, tone)
 
-# ---- Bopomofo mappings (faithful to ManTone.cpp) ----
+# Bopomofo mappings adapted from cpp-pinyin's ManTone.cpp.
 BOPOMOFO_INITIALS: dict[str, str] = {
     "b": "ㄅ", "p": "ㄆ", "m": "ㄇ", "f": "ㄈ",
     "d": "ㄉ", "t": "ㄊ", "n": "ㄋ", "l": "ㄌ",
@@ -79,7 +79,7 @@ BOPOMOFO_TONES: dict[int, str] = {
     1: "", 2: "\u02CA", 3: "\u02C7", 4: "\u02CB", 5: "\u02D9",
 }
 
-# Tone output style constants (matching cpp-pinyin API)
+# Tone style IDs inherited from cpp-pinyin.
 STYLE_NORMAL = 0
 STYLE_TONE = 1
 STYLE_TONE2 = 2
