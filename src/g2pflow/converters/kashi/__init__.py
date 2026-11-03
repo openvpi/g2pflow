@@ -55,19 +55,39 @@ def _is_stale(path: Path) -> bool:
     return path.is_file() and not _model_is_current(path)
 
 
-def _install(url: str, path: Path, *, stale=None) -> None:
-    """Download *url* and move it into place once the transfer succeeded."""
-    if stale is not None and not stale(path):
+def _model_needs_download(path: Path) -> bool:
+    """Whether a managed model is missing or from an older release."""
+    return not path.is_file() or _is_stale(path)
+
+
+def _install(url: str, path: Path, *, needed) -> None:
+    """Download *url* into *path* once, serialized per target file."""
+    if not needed(path):
         return
-    print(f"[g2pflow] downloading {url} ...", flush=True)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    staged = path.with_suffix(path.suffix + ".staged")
     try:
-        _download(url, staged)
-        path.with_suffix(path.suffix + ".inputs").unlink(missing_ok=True)
-        staged.replace(path)
-    finally:
-        staged.unlink(missing_ok=True)
+        from filelock import FileLock
+    except ModuleNotFoundError as exc:
+        if exc.name != "filelock":
+            raise
+        raise ImportError(
+            'kashi model download requires filelock. Install it with: '
+            'python -m pip install "g2pflow[kashi]"'
+        ) from exc
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Several instances may share a cache directory with different model
+    # paths, so the lock belongs to the file being written, not the model.
+    with FileLock(str(path.with_suffix(path.suffix + ".download.lock"))):
+        # Another instance may have finished the same download while waiting.
+        if not needed(path):
+            return
+        print(f"[g2pflow] downloading {url} ...", flush=True)
+        staged = path.with_suffix(path.suffix + ".staged")
+        try:
+            _download(url, staged)
+            path.with_suffix(path.suffix + ".inputs").unlink(missing_ok=True)
+            staged.replace(path)
+        finally:
+            staged.unlink(missing_ok=True)
 
 
 def _model_is_current(path: Path) -> bool:
@@ -167,20 +187,7 @@ class JapaneseKashiConverter(JapaneseReadingConverter):
                 "kashi model file not found: "
                 + ", ".join(str(path) for path in user_missing))
         if self._needs_download():
-            try:
-                from filelock import FileLock
-            except ModuleNotFoundError as exc:
-                if exc.name != "filelock":
-                    raise
-                raise ImportError(
-                    'kashi model download requires filelock. Install it with: '
-                    'python -m pip install "g2pflow[kashi]"'
-                ) from exc
-            self._model_path.parent.mkdir(parents=True, exist_ok=True)
-            # Serialize first-use downloads across spawned workers.
-            with FileLock(str(self._model_path.with_suffix(".download.lock"))):
-                if self._needs_download():
-                    self._fetch_managed()
+            self._fetch_managed()
         from .runtime import G2POnnxRuntime
         self._runtime = G2POnnxRuntime(
             model_path=self._model_path,
@@ -201,14 +208,14 @@ class JapaneseKashiConverter(JapaneseReadingConverter):
     def _fetch_managed(self) -> None:
         """Download into place, keeping any existing file until success."""
         if self._model_is_managed:
-            if not self._model_path.is_file():
-                _install(MODEL_URL, self._model_path)
-            elif _is_stale(self._model_path):
+            if self._model_path.is_file() and _is_stale(self._model_path):
                 print("[g2pflow] cached model is from an older release; "
                       "re-downloading ...", flush=True)
-                _install(MODEL_URL, self._model_path, stale=_is_stale)
-        if self._lexicon_is_managed and not self._lexicon_path.is_file():
-            _install(LEXICON_URL, self._lexicon_path)
+            _install(MODEL_URL, self._model_path,
+                     needed=_model_needs_download)
+        if self._lexicon_is_managed:
+            _install(LEXICON_URL, self._lexicon_path,
+                     needed=lambda path: not path.is_file())
 
     def _segments(self, text: str) -> list[KanaSegment]:
         return self._get_segmenter().segment(text)

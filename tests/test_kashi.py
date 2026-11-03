@@ -642,6 +642,7 @@ def test_caller_supplied_model_is_never_downloaded_over(kana_dict, tmp_path,
 
 def test_failed_download_leaves_the_cached_model_intact(tmp_path, monkeypatch):
     """A stale managed cache is only replaced once the new file arrived."""
+    pytest.importorskip("filelock")
     import g2pflow.converters.kashi as kashi
 
     model = tmp_path / "model.onnx"
@@ -652,13 +653,68 @@ def test_failed_download_leaves_the_cached_model_intact(tmp_path, monkeypatch):
 
     monkeypatch.setattr(kashi, "_download", fail)
     try:
-        kashi._install(kashi.MODEL_URL, model)
+        kashi._install(kashi.MODEL_URL, model,
+                       needed=kashi._model_needs_download)
     except IOError:
         pass
     else:
         raise AssertionError("expected the download failure to propagate")
     assert model.read_bytes() == b"previous generation"
     assert not model.with_suffix(".onnx.staged").exists()
+
+
+def test_shared_cache_downloads_the_lexicon_once(kana_dict, tmp_path, monkeypatch):
+    """Different model paths in one cache dir still share the lexicon lock."""
+    pytest.importorskip("filelock")
+    import threading
+    import time
+
+    import g2pflow.converters.kashi as kashi
+
+    entered = threading.Event()
+    release = threading.Event()
+    lexicon_calls = []
+
+    def slow_download(url, path, **kw):
+        if url == kashi.LEXICON_URL:
+            lexicon_calls.append(url)
+            entered.set()
+            release.wait(5)
+        path.write_bytes(b"downloaded")
+
+    monkeypatch.setattr(kashi, "_download", slow_download)
+
+    shared = JapaneseKashiConverter(str(kana_dict), cache_dir=str(tmp_path))
+    explicit = JapaneseKashiConverter(
+        str(kana_dict), model_path=str(tmp_path / "mine.onnx"),
+        cache_dir=str(tmp_path))
+    assert shared._lexicon_path == explicit._lexicon_path
+
+    errors = []
+
+    def fetch(converter):
+        try:
+            converter._fetch_managed()
+        except BaseException as exc:  # noqa: BLE001 - reported below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=fetch, args=(shared,)),
+               threading.Thread(target=fetch, args=(explicit,))]
+    threads[0].start()
+    assert entered.wait(5)
+    threads[1].start()
+    # The second instance must wait for the lexicon lock, not join the download.
+    time.sleep(0.2)
+    during = len(lexicon_calls)
+    release.set()
+    for thread in threads:
+        thread.join(10)
+
+    assert during == 1
+    assert len(lexicon_calls) == 1
+    assert errors == []
+    assert shared._lexicon_path.read_bytes() == b"downloaded"
+    assert not shared._lexicon_path.with_suffix(".txz.staged").exists()
 
 
 def test_beam_size_caps_kana_word_candidates(dictionary, tmp_path):
