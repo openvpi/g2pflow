@@ -125,7 +125,7 @@ class G2POnnxRuntime:
         except ImportError as exc:
             raise ImportError(
                 "japanese-kashi requires optional dependencies. Install them "
-                'with: python -m pip install "g2pflow[kashi]"'
+                'with: python -m pip install "g2pflow[all]"'
             ) from exc
         providers = ort.get_available_providers()
         use = ["DmlExecutionProvider", "CPUExecutionProvider"] \

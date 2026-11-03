@@ -48,15 +48,8 @@ def install(url: str, path: Path, *, needed) -> None:
     """Download *url* into *path* once, serialized per target file."""
     if not needed(path):
         return
-    try:
-        from filelock import FileLock
-    except ModuleNotFoundError as exc:
-        if exc.name != "filelock":
-            raise
-        raise ImportError(
-            'kashi model download requires filelock. Install it with: '
-            'python -m pip install "g2pflow[kashi]"'
-        ) from exc
+    from filelock import FileLock
+
     path.parent.mkdir(parents=True, exist_ok=True)
     with FileLock(str(path.with_suffix(path.suffix + ".download.lock"))):
         # Another instance may have finished the same download while waiting.

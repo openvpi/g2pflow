@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Event, Lock
 from types import SimpleNamespace
 
+import filelock
 import pytest
 
 from g2pflow.converters import japanese
@@ -38,7 +39,6 @@ def backend(monkeypatch):
 
 @pytest.mark.parametrize("cached_model", [None, b"incompatible", b"model"])
 def test_managed_resources_are_cached(kana_dict, tmp_path, backend, cached_model):
-    pytest.importorskip("filelock")
     instance = JapaneseKashiConverter(str(kana_dict), cache_dir=str(tmp_path))
     assert backend.downloads == backend.loads == []
     if cached_model is not None:
@@ -81,13 +81,12 @@ def test_missing_explicit_resource_raises(kana_dict, tmp_path, backend, option):
 def test_missing_runtime_reports_installation_hint(kana_dict, tmp_path, backend, monkeypatch):
     monkeypatch.setattr(japanese.importlib.util, "find_spec", lambda name: None)
     instance = JapaneseKashiConverter(str(kana_dict), cache_dir=str(tmp_path))
-    with pytest.raises(ImportError, match=r"g2pflow\[kashi\]"):
+    with pytest.raises(ImportError, match=r"g2pflow\[all\]"):
         instance._get_runtime()
     assert backend.downloads == []
 
 
 def test_failed_transfer_preserves_cached_resource(tmp_path, monkeypatch):
-    pytest.importorskip("filelock")
     target = tmp_path / "model.onnx"
     target.write_bytes(b"cached model")
 
@@ -103,7 +102,6 @@ def test_failed_transfer_preserves_cached_resource(tmp_path, monkeypatch):
 
 
 def test_shared_resource_download_is_serialized(kana_dict, tmp_path, backend, monkeypatch):
-    filelock = pytest.importorskip("filelock")
     native_lock = filelock.FileLock
     entered, release, second_attempt = Event(), Event(), Event()
     guard = Lock()

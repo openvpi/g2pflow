@@ -10,16 +10,13 @@ can be combined in priority order for mixed-language text.
 
 ```shell
 pip install g2pflow
-pip install "g2pflow[ja]"    # MeCab and UniDic
-pip install "g2pflow[kashi]" # kashi-g2p
-pip install "g2pflow[lstm]"  # ONNX inference for LSTM converters
-pip install "g2pflow[all]"   # All optional backends
+pip install "g2pflow[all]"   # Neural inference for kashi-g2p and LSTM converters
 ```
 
 From a checkout, install with `pip install -e .` or `pip install -e ".[all,dev]"`.
 
-The base package depends only on Pydantic. Optional backends load their native
-dependencies when used; downloads require filelock.
+The UniDic dictionary is loaded on first conversion and downloaded if missing.
+Neural models are loaded when inference is needed.
 
 ## Quick start
 

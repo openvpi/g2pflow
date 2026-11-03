@@ -106,7 +106,7 @@ class LSTMConverter(LexiconConverter):
                 raise
             raise ImportError(
                 'lstm requires onnxruntime. Install it with: '
-                'python -m pip install "g2pflow[lstm]"'
+                'python -m pip install "g2pflow[all]"'
             ) from exc
 
         self._encoder_session = ort.InferenceSession(
@@ -124,7 +124,7 @@ class LSTMConverter(LexiconConverter):
                 raise
             raise ImportError(
                 'lstm requires numpy. Install it with: '
-                'python -m pip install "g2pflow[lstm]"'
+                'python -m pip install "g2pflow[all]"'
             ) from exc
         self._ensure_sessions()
 

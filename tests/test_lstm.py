@@ -124,7 +124,7 @@ def test_pickle_drops_native_sessions(model_dir):
 
 def test_missing_runtime_hint(model_dir, monkeypatch):
     monkeypatch.setitem(sys.modules, "onnxruntime", None)
-    with pytest.raises(ImportError, match=r"g2pflow\[lstm\]"):
+    with pytest.raises(ImportError, match=r"g2pflow\[all\]"):
         LSTMConverter(model_path=str(model_dir)).infer_oov("a")
 
 
@@ -134,7 +134,7 @@ def test_dictionary_hits_work_without_numpy_or_runtime(model_dir, dictionary, mo
     instance = LSTMConverter(model_path=str(model_dir), dict_path=str(dictionary("known\tK\n")))
     word = instance.convert("known")[0]
     assert word.readings[0].paths[0][0].phonemes == ["K"]
-    with pytest.raises(ImportError, match=r"g2pflow\[lstm\]"):
+    with pytest.raises(ImportError, match=r"g2pflow\[all\]"):
         instance.infer_oov("a")
 
 

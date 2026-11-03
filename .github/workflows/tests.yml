@@ -60,7 +60,9 @@ jobs:
       - run: python -m build
       - run: python -m twine check dist/*
       - run: |
-          python -m pip download --only-binary=:all: --dest wheelhouse dist/*.whl "setuptools>=77.0.3" wheel
+          for package in dist/*.whl; do
+            python -m pip wheel --wheel-dir wheelhouse "${package}[all]" "setuptools>=77.0.3" wheel
+          done
       - run: python -m pytest --run-distribution -m distribution
       - uses: actions/upload-artifact@v4
         with:

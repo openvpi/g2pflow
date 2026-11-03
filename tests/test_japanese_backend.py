@@ -131,13 +131,6 @@ def test_explicit_directory_never_downloads_default(kana_dict, backend, tmp_path
     assert explicit.as_posix() in backend.events[0][1]
 
 
-def test_missing_filelock_reports_download_dependency(kana_dict, backend, monkeypatch):
-    monkeypatch.setitem(sys.modules, "filelock", None)
-    with pytest.raises(ImportError, match=r"g2pflow\[ja\]"):
-        JapaneseMecabConverter(str(kana_dict))._get_tagger()
-    assert backend.events == []
-
-
 def test_download_and_tagger_failures_propagate(kana_dict, backend, monkeypatch):
     def fail():
         raise OSError("download unavailable")
@@ -153,13 +146,6 @@ def test_download_and_tagger_failures_propagate(kana_dict, backend, monkeypatch)
     monkeypatch.setattr(backend.fugashi, "Tagger", broken)
     with pytest.raises(RuntimeError, match="invalid dictionary"):
         JapaneseMecabConverter(str(kana_dict), unidic_dir="explicit")._get_tagger()
-
-
-@pytest.mark.parametrize("missing", ["fugashi", "unidic"])
-def test_optional_dependency_install_hint(kana_dict, monkeypatch, missing):
-    monkeypatch.setitem(sys.modules, missing, None)
-    with pytest.raises(ImportError, match=r"g2pflow\[ja\]"):
-        JapaneseMecabConverter(str(kana_dict))._get_tagger()
 
 
 def test_transitive_missing_dependency_is_not_hidden(kana_dict, monkeypatch):

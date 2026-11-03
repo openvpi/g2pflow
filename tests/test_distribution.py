@@ -36,15 +36,16 @@ def test_archive_contents(artifacts):
         assert any(name.endswith("/licenses/licenses/cpp-pinyin-LICENSE.txt") for name in files)
         assert any(name.endswith("/licenses/licenses/cpp-kana-LICENSE.txt") for name in files)
         metadata = archive.read(next(name for name in files if name.endswith(".dist-info/METADATA"))).decode()
-        assert "Provides-Extra: ja" in metadata
-        assert "Provides-Extra: kashi" in metadata
-        assert "Provides-Extra: lstm" in metadata
+        assert "Provides-Extra: all" in metadata
         requirements = [line.removeprefix("Requires-Dist: ")
                         for line in metadata.splitlines() if line.startswith("Requires-Dist: ")]
-        assert {re.split(r"[<>=!~\[ ]", requirement)[0]
-                for requirement in requirements if ";" not in requirement} == {"pydantic"}
-        assert any(requirement.startswith("numpy;") and 'extra == "lstm"' in requirement for requirement in requirements)
-        assert any(requirement.startswith("filelock;") and 'extra == "ja"' in requirement for requirement in requirements)
+        base_requirements = {re.split(r"[<>=!~\[ ]", requirement)[0]
+                             for requirement in requirements if ";" not in requirement}
+        assert {"pydantic", "fugashi", "unidic", "filelock"} <= base_requirements
+        assert {"numpy", "onnxruntime"}.isdisjoint(base_requirements)
+        for name in ("numpy", "onnxruntime"):
+            assert any(requirement.startswith(f"{name};") and 'extra == "all"' in requirement
+                       for requirement in requirements)
         assert "License-Expression:" in metadata
     with tarfile.open(source) as archive:
         files = archive.getnames()
@@ -60,7 +61,8 @@ def run(*args, cwd, env):
 
 
 @pytest.mark.parametrize("artifact_kind", ["wheel", "sdist"])
-def test_clean_install_and_resources(artifacts, tmp_path, artifact_kind):
+@pytest.mark.parametrize("extra", ["", "all"], ids=["base", "all"])
+def test_clean_install_and_resources(artifacts, tmp_path, artifact_kind, extra):
     wheel, source = artifacts
     root = Path(__file__).resolve().parent.parent
     wheelhouse = Path(os.environ.get("G2PFLOW_WHEELHOUSE", root / "wheelhouse")).resolve()
@@ -77,7 +79,8 @@ def test_clean_install_and_resources(artifacts, tmp_path, artifact_kind):
     environment = tmp_path / "environment"
     venv.EnvBuilder(with_pip=True).create(environment)
     python = environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-    run(str(python), "-m", "pip", "install", str(wheel), cwd=tmp_path, env=env)
+    requirement = f"{wheel}[{extra}]" if extra else str(wheel)
+    run(str(python), "-m", "pip", "install", requirement, cwd=tmp_path, env=env)
     run(str(python), "-m", "pip", "check", cwd=tmp_path, env=env)
     code = '''import importlib.util
 import json
@@ -86,8 +89,13 @@ from pathlib import Path
 import g2pflow
 from g2pflow import G2PPipelineConfig, build_pipeline_from_config, register_plugin_paths
 assert Path(g2pflow.__file__).is_relative_to(Path(sys.prefix))
-for name in ('numpy', 'filelock', 'torch', 'lightning', 'onnxruntime', 'fugashi', 'unidic'):
+for name in ('filelock', 'fugashi', 'unidic'):
+    assert importlib.util.find_spec(name) is not None, name
+for name in ('numpy', 'onnxruntime'):
+    assert (importlib.util.find_spec(name) is not None) == (sys.argv[1] == 'all'), name
+for name in ('torch', 'lightning'):
     assert importlib.util.find_spec(name) is None, name
+for name in ('numpy', 'filelock', 'onnxruntime', 'fugashi', 'unidic'):
     assert name not in sys.modules, name
 dictionary = Path('phones.txt')
 dictionary.write_text('ni\\tn i\\nhao\\th ao\\n', encoding='utf-8')
@@ -126,5 +134,14 @@ plugins.mkdir()
 register_plugin_paths(plugins)
 config = G2PPipelineConfig.model_validate({'converters': [{'id': 'installed-plugin'}]})
 assert build_pipeline_from_config(config).convert('installed')[0].text == 'installed'
+for name in ('numpy', 'filelock', 'onnxruntime', 'fugashi', 'unidic'):
+    assert name not in sys.modules, name
+import filelock
+import fugashi
+import unidic
+assert not (Path(unidic.DICDIR) / 'sys.dic').exists()
+if sys.argv[1] == 'all':
+    import numpy
+    import onnxruntime
 '''
-    run(str(python), "-c", code, cwd=tmp_path, env=env)
+    run(str(python), "-c", code, extra, cwd=tmp_path, env=env)

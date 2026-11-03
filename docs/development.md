@@ -12,7 +12,7 @@ backend doubles exercise routing, configuration, plugin discovery, candidate
 structure, resource caching and model decoding. Plugin tests include a
 real `spawn` process. Tests write their fixtures into pytest's temporary folders.
 The `dev` extra includes NumPy to exercise numerical code. Distribution
-tests separately verify installations with only the base Pydantic dependency.
+tests separately verify base installations and installations with the `all` extra.
 
 ## Real-resource integration tests
 
@@ -47,11 +47,12 @@ dependency.
 ```shell
 python -m build
 python -m twine check dist/*
-python -m pip download --only-binary=:all: --dest wheelhouse dist/g2pflow-0.3.1-py3-none-any.whl "setuptools>=77.0.3" wheel
+python -m pip wheel --wheel-dir wheelhouse "dist/g2pflow-0.3.1-py3-none-any.whl[all]" "setuptools>=77.0.3" wheel
 pytest --run-distribution -m distribution
 ```
 
-Preparing `wheelhouse` is the network-enabled preparation step. Distribution
+Preparing `wheelhouse` downloads dependencies and builds wheels for packages
+distributed as source archives, including UniDic. Distribution
 tests then use `--no-index` behavior to install into fresh environments and
 rebuild the wheel from the sdist. They verify dependencies, packaged resources,
 licensing files, standalone operation and external plugins outside the checkout.
@@ -65,7 +66,7 @@ and one sdist version in the artifact directory for this validation.
 
 GitHub Actions runs the offline suite on Ubuntu with Python 3.10 through 3.14,
 and on Windows and macOS with Python 3.10 and 3.14. A separate Python 3.12 job
-installs all optional backends and runs the suite without downloading models or
+installs the `all` extra and runs the suite without downloading models or
 UniDic. A distribution job builds wheel/sdist, checks metadata, prepares dependency
 wheels and exercises clean installations. Coverage reports and distribution
 archives are uploaded as workflow artifacts.

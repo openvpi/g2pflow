@@ -268,30 +268,16 @@ class JapaneseMecabConverter(JapaneseReadingConverter):
     def _get_tagger(self):
         if self._tagger is not None:
             return self._tagger
-        try:
-            import fugashi
-            import unidic
-            from unidic.download import download_version
-        except ModuleNotFoundError as exc:
-            if exc.name not in ("fugashi", "unidic"):
-                raise
-            raise ImportError(
-                "japanese-mecab requires optional dependencies. Install them with: "
-                'python -m pip install "g2pflow[ja]"'
-            ) from exc
+        import fugashi
+        import unidic
+        from unidic.download import download_version
+
         if self._unidic_dir is None:
             dicdir = Path(unidic.DICDIR)
             required = (dicdir / "sys.dic", dicdir / "mecabrc")
             if not all(path.is_file() for path in required):
-                try:
-                    from filelock import FileLock
-                except ModuleNotFoundError as exc:
-                    if exc.name != "filelock":
-                        raise
-                    raise ImportError(
-                        'UniDic download requires filelock. Install it with: '
-                        'python -m pip install "g2pflow[ja]"'
-                    ) from exc
+                from filelock import FileLock
+
                 # Serialize first-use downloads across spawned workers.
                 with FileLock(str(dicdir.parent / "download.lock")):
                     if not all(path.is_file() for path in required):
@@ -385,7 +371,7 @@ class JapaneseKashiConverter(JapaneseReadingConverter):
         if importlib.util.find_spec("onnxruntime") is None:
             raise ImportError(
                 "japanese-kashi requires optional dependencies. Install them with: "
-                'python -m pip install "g2pflow[kashi]"'
+                'python -m pip install "g2pflow[all]"'
             )
         missing = [
             path for path, managed in (

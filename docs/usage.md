@@ -115,7 +115,7 @@ raises `KeyError` instead of falling back to separate keys or guessed phonemes.
 
 ## Japanese MeCab and UniDic
 
-Install `g2pflow[ja]` for fugashi, UniDic and filelock. `japanese-mecab` accepts
+The base installation includes fugashi, UniDic and filelock. `japanese-mecab` accepts
 `dict_path`, `nbest=32`, `double_written_sokuon=False` and `unidic_dir=None`.
 MeCab supplies word boundaries and UniDic readings; the shared Kana converter
 maps their pronunciations to dictionary paths. `nbest` controls how many UniDic
@@ -136,8 +136,7 @@ non-Kana words raise `G2PConversionError`.
 
 ## kashi-g2p (Japanese)
 
-Install `g2pflow[kashi]` for fugashi, UniDic, NumPy, ONNX Runtime and
-filelock. `japanese-kashi` accepts `dict_path`, `model_path=None`,
+Install `g2pflow[all]` for NumPy and ONNX Runtime. `japanese-kashi` accepts `dict_path`, `model_path=None`,
 `lexicon_path=None`, `cache_dir=None`, `prefer_dml=False`, `beam_size=16`
 and `unidic_dir=None`. UniDic determines word boundaries; the model scores
 candidate readings within each word using sentence context. The shared Kana
@@ -159,7 +158,7 @@ for Latin text and digits in mixed input, and preprocess punctuation as needed.
 
 ## LSTM ONNX inference
 
-Install `g2pflow[lstm]` for NumPy and ONNX Runtime. The converter accepts `model_path`, `dict_path=None`,
+Install `g2pflow[all]` for NumPy and ONNX Runtime. The converter accepts `model_path`, `dict_path=None`,
 and `beam_size=16`. Its model directory must contain `encoder.onnx`,
 `decoder.onnx`, `char.json` and `phonemes.json`, in the
 [LstmG2p](https://github.com/wolfgitpr/LstmG2p) format. No model is bundled or
