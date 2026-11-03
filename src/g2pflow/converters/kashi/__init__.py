@@ -8,10 +8,8 @@ from __future__ import annotations
 import os
 import shutil
 import urllib.request
-from itertools import product
 from pathlib import Path
 
-from ...registry import converter
 from ..base import (Converter, G2PConversionError, G2PReading, G2PWord,
                     compose_word)
 from ..japanese import JapaneseKanaConverter, _is_japanese_char
@@ -123,7 +121,6 @@ def _kana_only(text: str) -> bool:
     return bool(text) and all(is_kana(ch) or ch == "ー" for ch in text)
 
 
-@converter(id="japanese-kashi", language="ja,jpn")
 class JapaneseKashiConverter(Converter):
     """Japanese G2P readings via the kashi-g2p ONNX model.
     *dict_path*: romaji-to-phoneme dictionary; *model_path* / *lexicon_path* /
@@ -220,22 +217,6 @@ class JapaneseKashiConverter(Converter):
         if self._lexicon_is_managed and not self._lexicon_path.is_file():
             _install(LEXICON_URL, self._lexicon_path)
 
-    def _reading(self, kana: str) -> G2PReading:
-        kana_words = self._kana._convert(kana)
-        alternatives = [
-            [path for reading in word.readings for path in reading.paths]
-            for word in kana_words
-        ]
-        paths = []
-        seen = set()
-        for parts in product(*alternatives):
-            path = [group for part in parts for group in part]
-            key = tuple((group.script, tuple(group.phonemes)) for group in path)
-            if key not in seen:
-                seen.add(key)
-                paths.append(path)
-        return G2PReading(paths=paths)
-
     def _kana_readings(self, surface: str, pron: str) -> list[G2PReading]:
         candidates = []
         if _kana_only(pron):
@@ -245,7 +226,7 @@ class JapaneseKashiConverter(Converter):
         seen = set()
         for candidate in candidates:
             try:
-                reading = self._reading(candidate)
+                reading = self._kana.reading(candidate)
             except KeyError:
                 continue
             key = tuple(tuple((group.script, tuple(group.phonemes))
@@ -284,7 +265,7 @@ class JapaneseKashiConverter(Converter):
                 continue
             seen.add(reading)
             try:
-                readings.append(self._reading(reading))
+                readings.append(self._kana.reading(reading))
             except Exception:
                 continue
         if not readings:
@@ -326,7 +307,7 @@ class JapaneseKashiConverter(Converter):
         readings = []
         for pron in prons:
             try:
-                readings.append(self._reading(pron))
+                readings.append(self._kana.reading(pron))
             except KeyError:
                 continue
         if not readings:
