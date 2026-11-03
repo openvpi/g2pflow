@@ -5,6 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
+from .._kana import _hiragana
 from .constants import MAX_EDGES, READING_LEN, SEQ_LEN
 from .decoder import decode_beam
 from .lexicon import (
@@ -13,7 +14,6 @@ from .lexicon import (
     UnifiedLexicon,
     _char_type,
     build_edges,
-    hira,
 )
 
 _BUNDLE_MAGIC = "##kashi-g2p v1"
@@ -154,7 +154,7 @@ class G2POnnxRuntime:
         if cached is None:
             ids = np.zeros((READING_LEN,), dtype=np.int64)
             mask = np.zeros((READING_LEN,), dtype=bool)
-            for j, char in enumerate(hira(reading)[:READING_LEN]):
+            for j, char in enumerate(_hiragana(reading)[:READING_LEN]):
                 ids[j] = self.vocab.get(char, self.unk_id)
                 mask[j] = True
             if len(self._reading_cache) < 200000:

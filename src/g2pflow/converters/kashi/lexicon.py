@@ -1,7 +1,6 @@
 """Candidate reading lattice: edges, lexicon pack and filters."""
 
 import re
-import unicodedata
 
 from .constants import MAX_EDGES, MAX_SPAN_READINGS, MAX_SURFACE_LEN
 
@@ -9,13 +8,6 @@ KANJI_RE = re.compile(
     r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff"
     r"\U00020000-\U0002fa1f々〆ヶ]"
 )
-
-
-def hira(text: str) -> str:
-    text = unicodedata.normalize("NFKC", text)
-    return "".join(
-        chr(ord(ch) - 0x60) if 0x30A1 <= ord(ch) <= 0x30F6 else ch for ch in text
-    )
 
 
 def is_kanji(ch: str) -> bool:

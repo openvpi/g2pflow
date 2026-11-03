@@ -3,8 +3,8 @@
 import pytest
 
 from g2pflow import G2PConversionError, G2PGroup
+from g2pflow.converters._kana import KanaSegment
 from g2pflow.converters.kashi import MODEL_URL, LEXICON_URL, JapaneseKashiConverter
-from g2pflow.converters.kashi.segmentation import Segment
 
 
 class _FakeSegmenter:
@@ -14,7 +14,7 @@ class _FakeSegmenter:
 
     def segment(self, text):
         self.calls.append(text)
-        return [Segment(*item)
+        return [KanaSegment(*item)
                 for item in self.segments_by_text.get(text, [])]
 
     def whole_word_readings(self, text, nbest=8):
@@ -341,7 +341,7 @@ def test_non_matching_candidate_is_not_folded(dictionary, tmp_path):
 
 def test_windows_follow_segment_boundaries():
     from g2pflow.converters.kashi.runtime import windows_from_segments
-    segments = [Segment(i * 10, (i + 1) * 10, "x" * 10) for i in range(20)]
+    segments = [KanaSegment(i * 10, (i + 1) * 10, "x" * 10) for i in range(20)]
     windows = windows_from_segments(segments, 200)
     assert windows[0][0] == 0 and windows[-1][1] == 200
     for start, end in windows:
@@ -370,7 +370,7 @@ def test_long_text_is_built_per_window_without_edge_cap_error():
     runtime._char_readings = {}
     runtime._decomposition_cache = {}
     runtime.score = lambda local_text, edges: [0.0] * len(edges)
-    segments = [Segment(i, i + 1, char) for i, char in enumerate(text)]
+    segments = [KanaSegment(i, i + 1, char) for i, char in enumerate(text)]
     windows = len(__import__(
         "g2pflow.converters.kashi.runtime", fromlist=["windows_from_segments"]
     ).windows_from_segments(segments, len(text)))
@@ -403,7 +403,7 @@ def test_convert_word_returns_one_fixed_word(dictionary, tmp_path):
         "to\tt o\nu\tu\nkyo\tky o\nta\tt a\n", "fixed.txt")
     converter = JapaneseKashiConverter(str(table), model_path=str(model),
                                        lexicon_path=str(lexicon))
-    converter._segmenter = _FakeSegmenter({"東京都": []})
+    converter._segmenter = _FakeSegmenter({"東京都": [(0, 3, "東京都")]})
     converter._runtime = _FakeRuntime(
         {"東京都": [("東京都", ["とうきょうと"])]})
     word = converter.convert_word("東京都")
@@ -484,14 +484,14 @@ def test_pipeline_config_integration(kana_dict, tmp_path):
 def test_merge_numeral_counters_does_not_cross_a_gap():
     from g2pflow.converters.kashi.segmentation import merge_numeral_counters
     text = "3 人"
-    segments = [Segment(0, 1, "3"), Segment(2, 3, "人")]
+    segments = [KanaSegment(0, 1, "3"), KanaSegment(2, 3, "人")]
     assert [segment.surface for segment in
             merge_numeral_counters(segments, text)] == ["3", "人"]
 
 
 def test_windows_from_segments_chunks_a_trailing_gap():
     from g2pflow.converters.kashi.runtime import windows_from_segments
-    segments = [Segment(0, 70, "x" * 70)]
+    segments = [KanaSegment(0, 70, "x" * 70)]
     windows = windows_from_segments(segments, 200)
     assert windows[0][0] == 0 and windows[-1][1] == 200
     assert all(0 < end - start <= 64 for start, end in windows)
@@ -512,8 +512,8 @@ def test_predict_words_skips_whitespace_segments():
     runtime._char_readings = {}
     runtime._decomposition_cache = {}
     runtime.score = lambda local_text, edges: [0.0] * len(edges)
-    segments = [Segment(0, 1, "あ"), Segment(1, 2, " "),
-                Segment(2, 3, "い")]
+    segments = [KanaSegment(0, 1, "あ"), KanaSegment(1, 2, " "),
+                KanaSegment(2, 3, "い")]
     words = runtime.predict_words("あ い", segments, beam_size=4)
     assert [word["surface"] for word in words] == ["あ", "い"]
     assert [(word["start"], word["end"]) for word in words] == [(0, 1), (2, 3)]
@@ -528,7 +528,7 @@ def test_segment_longer_than_window_is_decoded_per_chunk():
     runtime._char_readings = {}
     runtime._decomposition_cache = {}
     runtime.score = lambda local_text, edges: [0.0] * len(edges)
-    words = runtime.predict_words(text, [Segment(0, 80, text)], beam_size=4)
+    words = runtime.predict_words(text, [KanaSegment(0, 80, text)], beam_size=4)
     assert len(words) == 1
     assert words[0]["candidates"]
     assert words[0]["candidates"][0]["reading"] == text
@@ -553,7 +553,7 @@ def test_cross_segment_edges_are_not_scored():
         return [0.0] * len(edges)
 
     runtime.score = score
-    segments = [Segment(0, 2, "大学"), Segment(2, 3, "生")]
+    segments = [KanaSegment(0, 2, "大学"), KanaSegment(2, 3, "生")]
     words = runtime.predict_words("大学生", segments, beam_size=4)
     assert all(not (start < 2 < end) for start, end, _reading in seen)
     assert "だいがくせい" not in {reading for _s, _e, reading in seen}
@@ -783,11 +783,13 @@ def test_iteration_mark_merges_before_choosing_the_reading(dictionary, tmp_path)
         model_path=str(model), lexicon_path=str(lexicon))
     converter._segmenter = _FakeSegmenter(
         {"はゝ": [(0, 1, "は", "ワ"), (1, 2, "ゝ")]})
-    converter._runtime = _FakeRuntime({"はゝ": [("は", ["は"]), ("ゝ", ["ゝ"])]})
+    # Units are joined before the backend is asked, so it sees one word.
+    converter._runtime = _FakeRuntime({"はゝ": [("はゝ", ["はゝ"])]})
 
     words = converter.convert("はゝ")
     assert [word.text for word in words] == ["はゝ"]
     assert phones(words[0]) == [["h", "a", "h", "a"]]
+    assert converter._runtime.calls == [("はゝ", 1, 1)]
 
 
 def test_compose_fallback_respects_beam_size(dictionary, tmp_path):

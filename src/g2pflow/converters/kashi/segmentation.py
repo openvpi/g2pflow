@@ -3,26 +3,12 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
 from pathlib import Path
+
+from .._kana import KanaSegment
 
 _COUNTER_HEADS = frozenset(
     "年月日時分秒人個本枚台番曲目匹通件点度階杯冊倍段歳才回歩")
-
-
-@dataclass(frozen=True, slots=True)
-class Segment:
-    """One fixed word span in the input text."""
-
-    start: int
-    end: int
-    surface: str
-    pron: str = ""
-    kana: str = ""
-
-    @property
-    def length(self) -> int:
-        return self.end - self.start
 
 
 def _is_numeral_surface(surface: str) -> bool:
@@ -34,10 +20,10 @@ def _is_counter_surface(surface: str) -> bool:
                               or surface[0] == "つ")
 
 
-def merge_numeral_counters(segments: list[Segment],
-                           text: str) -> list[Segment]:
+def merge_numeral_counters(segments: list[KanaSegment],
+                           text: str) -> list[KanaSegment]:
     """Merge numeral + counter segments so numbers keep one reading unit."""
-    merged: list[Segment] = []
+    merged: list[KanaSegment] = []
     index = 0
     while index < len(segments):
         current = segments[index]
@@ -50,7 +36,7 @@ def merge_numeral_counters(segments: list[Segment],
                     if current.pron and following.pron else "")
             kana = (current.kana + following.kana
                     if current.kana and following.kana else "")
-            merged.append(Segment(current.start, following.end,
+            merged.append(KanaSegment(current.start, following.end,
                                   text[current.start:following.end],
                                   pron, kana))
             index += 2
@@ -109,8 +95,8 @@ class UnidicSegmenter:
             readings.append(pron)
         return readings
 
-    def segment(self, text: str) -> list[Segment]:
-        segments: list[Segment] = []
+    def segment(self, text: str) -> list[KanaSegment]:
+        segments: list[KanaSegment] = []
         cursor = 0
         for node in self.tagger(text):
             surface = str(node.surface)
@@ -122,7 +108,7 @@ class UnidicSegmenter:
                     f"UniDic surface {surface!r} is not present in the input")
             if start > cursor:
                 # MeCab drops whitespace nodes; keep each gap as its own segment.
-                segments.append(Segment(cursor, start, text[cursor:start]))
+                segments.append(KanaSegment(cursor, start, text[cursor:start]))
             pron = str(getattr(node.feature, "pron", "") or "")
             if pron in ("*", "-"):
                 pron = ""
@@ -130,8 +116,8 @@ class UnidicSegmenter:
             if kana in ("*", "-"):
                 kana = ""
             end = start + len(surface)
-            segments.append(Segment(start, end, surface, pron, kana))
+            segments.append(KanaSegment(start, end, surface, pron, kana))
             cursor = end
         if cursor < len(text):
-            segments.append(Segment(cursor, len(text), text[cursor:]))
+            segments.append(KanaSegment(cursor, len(text), text[cursor:]))
         return merge_numeral_counters(segments, text)

@@ -1,6 +1,7 @@
 """Japanese G2P converter backed by the kashi-g2p ONNX model.
-UniDic fixes the word boundaries; each word exposes beam-search N-best
-readings through the Kana phoneme stage.
+
+UniDic fixes the word boundaries; the model supplies beam-search N-best
+readings, and the shared Japanese reading flow turns them into phonemes.
 """
 
 from __future__ import annotations
@@ -11,13 +12,9 @@ import shutil
 import urllib.request
 from pathlib import Path
 
-from .._kana import parse_kana
-from ..base import (Converter, G2PConversionError, G2PReading, G2PWord,
-                    compose_word)
-from ..japanese import JapaneseKanaConverter, _is_japanese_char
-from .lexicon import hira
+from .._kana import KanaReading, KanaSegment
+from ..japanese import JapaneseReadingConverter
 from .segmentation import UnidicSegmenter
-from ..text import find_run, is_kana
 
 _RELEASE_TAG = "v1.1.0"
 _RELEASE_BASE = ("https://github.com/Xiantaidu/kashi-g2p/releases/"
@@ -116,25 +113,7 @@ def _download(url: str, path: Path, *, attempts: int = 3) -> None:
     raise IOError(f"could not download {url}") from last_error
 
 
-def _kana_only(text: str) -> bool:
-    return bool(text) and all(is_kana(ch) or ch == "ー" for ch in text)
-
-
-def _shares_kana_unit(left: str, right: str) -> bool:
-    """Whether one kana unit spans both surfaces."""
-    if not left or not right:
-        return False
-    if not (all(is_kana(ch) for ch in left)
-            and all(is_kana(ch) for ch in right)):
-        return False
-    try:
-        units = parse_kana(left + right)
-    except KeyError:
-        return False
-    return any(unit.start < len(left) < unit.end for unit in units)
-
-
-class JapaneseKashiConverter(Converter):
+class JapaneseKashiConverter(JapaneseReadingConverter):
     """Japanese G2P readings via the kashi-g2p ONNX model.
     *dict_path*: romaji-to-phoneme dictionary; *model_path* / *lexicon_path* /
     *cache_dir* / *unidic_dir*: auto-download resources; *beam_size* caps
@@ -148,7 +127,10 @@ class JapaneseKashiConverter(Converter):
                  prefer_dml: bool = False,
                  beam_size: int = 16,
                  unidic_dir: str | None = None) -> None:
-        self._kana = JapaneseKanaConverter(dict_path=dict_path)
+        self._beam_size = max(1, int(beam_size))
+        # Kana words keep their contextual UniDic pronunciation.
+        super().__init__(dict_path, max_readings=self._beam_size,
+                         include_surface=True)
         cache = Path(cache_dir) if cache_dir else _default_cache_dir() / "kashi"
         cache = cache / _RELEASE_TAG
         # Only files this package placed in its own cache may be replaced.
@@ -157,14 +139,9 @@ class JapaneseKashiConverter(Converter):
         self._model_path = Path(model_path) if model_path else cache / "model.onnx"
         self._lexicon_path = Path(lexicon_path) if lexicon_path else cache / "lexicon.txz"
         self._prefer_dml = prefer_dml
-        self._beam_size = max(1, int(beam_size))
         self._unidic_dir = unidic_dir
         self._runtime = None
         self._segmenter = None
-
-    def find(self, text: str) -> tuple[int, int] | None:
-        # Japanese-script runs only, mirroring japanese-mecab.
-        return find_run(text, _is_japanese_char)
 
     def _get_segmenter(self):
         if self._segmenter is None:
@@ -233,38 +210,21 @@ class JapaneseKashiConverter(Converter):
         if self._lexicon_is_managed and not self._lexicon_path.is_file():
             _install(LEXICON_URL, self._lexicon_path)
 
-    def _readings_for(self, surface: str, candidates: list[dict],
-                      kana: str, pron: str) -> list[G2PReading]:
-        """Readings for one already-merged surface."""
-        if all(is_kana(ch) for ch in surface):
-            raw = ([pron] if _kana_only(pron) else []) + [surface]
-        else:
-            raw = []
-            for candidate in candidates:
-                reading = candidate["reading"]
-                if not _kana_only(reading):
-                    continue
-                if kana and pron and _kana_only(pron) \
-                        and hira(reading) == hira(kana):
-                    reading = pron
-                raw.append(reading)
-        readings: list[G2PReading] = []
-        seen: set[tuple] = set()
-        for spelling in dict.fromkeys(raw):
-            try:
-                reading = self._kana.reading(spelling)
-            except KeyError:
-                continue
-            key = tuple(tuple((group.script, tuple(group.phonemes))
-                              for group in path)
-                        for path in reading.paths)
-            if key in seen:
-                continue
-            seen.add(key)
-            readings.append(reading)
-        if not readings:
-            raise G2PConversionError([surface])
-        return readings[:self._beam_size]
+    def _segments(self, text: str) -> list[KanaSegment]:
+        return self._get_segmenter().segment(text)
+
+    def _readings(self, text: str,
+                  segments: list[KanaSegment]) -> list[list[KanaReading]]:
+        return [
+            [KanaReading(candidate["reading"])
+             for candidate in word["candidates"]]
+            for word in self._get_runtime().predict_words(
+                text, segments, beam_size=self._beam_size)
+        ]
+
+    def _word_readings(self, text: str) -> list[KanaReading]:
+        return [KanaReading(pron)
+                for pron in self._get_segmenter().whole_word_readings(text)]
 
     def __getstate__(self) -> dict:
         # Native ONNX/fugashi handles are rebuilt lazily after unpickling.
@@ -272,52 +232,3 @@ class JapaneseKashiConverter(Converter):
         state["_runtime"] = None
         state["_segmenter"] = None
         return state
-
-    def _convert(self, text: str) -> list[G2PWord]:
-        if not text:
-            return []
-        segments = self._get_segmenter().segment(text)
-        info = {segment.start: segment for segment in segments}
-        entries: list[tuple[str, str, str, str, list[dict]]] = []
-        for word in self._get_runtime().predict_words(
-                text, segments, beam_size=self._beam_size):
-            start, end = word["start"], word["end"]
-            segment = info.get(start)
-            entries.append((
-                text[start:end], word["surface"],
-                segment.pron if segment else "",
-                segment.kana if segment else "",
-                word["candidates"]))
-        # Boundaries first: UniDic may cut one kana unit in two, and the
-        # readings of a merged unit are not the readings of its parts.
-        merged: list[tuple[str, str, str, str, list[dict]]] = []
-        for entry in entries:
-            if merged and _shares_kana_unit(merged[-1][1], entry[1]):
-                previous = merged[-1]
-                merged[-1] = (previous[0] + entry[0], previous[1] + entry[1],
-                              "", "", [])
-                continue
-            merged.append(entry)
-        return [G2PWord(text=surface_text,
-                        readings=self._readings_for(surface, candidates,
-                                                    kana, pron))
-                for surface_text, surface, pron, kana, candidates in merged]
-
-    def _convert_word(self, text: str) -> G2PWord | None:
-        """Convert a caller-fixed word as one unit, like japanese-mecab."""
-        if not text:
-            return None
-        prons = self._get_segmenter().whole_word_readings(text)
-        readings = []
-        for pron in prons:
-            try:
-                readings.append(self._kana.reading(pron))
-            except KeyError:
-                continue
-        if not readings:
-            # Same fallback as japanese-mecab when no whole word exists.
-            composed = compose_word(text, self._convert(text))
-            if composed is not None:
-                composed.readings = composed.readings[:self._beam_size]
-            return composed
-        return G2PWord(text=text, readings=readings[:self._beam_size])
