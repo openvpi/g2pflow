@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from itertools import product
+from itertools import islice, product
 from typing import TypeAlias, final
 
 from ..preprocessors.base import Preprocessor
@@ -99,16 +99,23 @@ class G2PWordBoundaryError(ValueError):
         super().__init__(f"Cannot preserve the fixed word {text!r}: {reason}")
 
 
-def compose_word(text: str, words: list[G2PWord]) -> G2PWord | None:
+def compose_word(
+    text: str, words: list[G2PWord], *, max_readings: int | None = None,
+) -> G2PWord | None:
     """Compose independent backend units, preserving reading/path nesting.
 
     Only converters that define their units as independent should call this.
     It is not a general pipeline fallback for a violated word boundary.
     """
+    if max_readings is not None and max_readings < 1:
+        raise ValueError("max_readings must be a positive integer.")
     if not words:
         return None
     readings = []
-    for combination in product(*(word.readings for word in words)):
+    combinations = product(*(word.readings for word in words))
+    if max_readings is not None:
+        combinations = islice(combinations, max_readings)
+    for combination in combinations:
         paths = [
             [G2PGroup(group.script, list(group.phonemes)) for path in parts for group in path]
             for parts in product(*(reading.paths for reading in combination))

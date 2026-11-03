@@ -2,7 +2,7 @@ import pytest
 
 from g2pflow import G2PGroup, G2PPipeline
 from g2pflow.converters._kana import parse_kana
-from g2pflow.converters.japanese import JapaneseKanaConverter
+from g2pflow.converters.japanese import JapaneseKanaConverter, KanaReading
 from g2pflow.preprocessors.simple import NormalizeUnicodePreprocessor
 
 
@@ -75,3 +75,17 @@ def test_preprocessing_and_fixed_word_boundaries(dictionary):
     assert [group.script for group in word.readings[0].paths[0]] == ["ga", "ka"]
     with pytest.raises(KeyError, match="preceding syllable"):
         pipeline.convert_pfml("<word>か</word><word>ゞ</word>")
+
+
+@pytest.mark.parametrize("reading,expected", [
+    (KanaReading("きょう", "キョー"), ["kyo"]),
+    (KanaReading("ちょうど", "チョード"), ["cho", "do"]),
+    (KanaReading("おもう", "オモウ"), ["o", "mo", "u"]),
+    (KanaReading("は", "ワ"), ["wa"]),
+    (KanaReading("は"), ["ha"]),
+    (KanaReading("きょう"), ["kyo", "u"]),
+])
+def test_spelling_and_explicit_pronunciation_are_distinct(dictionary, reading, expected):
+    path = dictionary("kyo\tKY O\ncho\tCH O\ndo\tD O\no\tO\nmo\tM O\nu\tU\nwa\tW A\nha\tH A\n")
+    converter = JapaneseKanaConverter(str(path))
+    assert [group.script for group in converter.reading(reading).paths[0]] == expected

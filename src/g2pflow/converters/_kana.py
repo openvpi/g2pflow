@@ -77,6 +77,29 @@ class KanaUnit:
     scripts: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class KanaReading:
+    """A kana spelling and, when known, its explicit pronunciation."""
+
+    kana: str
+    pronunciation: str | None = None
+
+
+@dataclass(frozen=True)
+class KanaSegment:
+    """A backend word span with an optional contextual UniDic reading."""
+
+    start: int
+    end: int
+    surface: str
+    pron: str = ""
+    kana: str = ""
+
+    @property
+    def length(self) -> int:
+        return self.end - self.start
+
+
 def _hiragana(text: str) -> str:
     return "".join(
         chr(ord(char) - 0x60) if 0x30A1 <= ord(char) <= 0x30F6
@@ -145,35 +168,46 @@ def parse_kana(text: str, *, double_written_sokuon: bool = False) -> list[KanaUn
     return result
 
 
-def merge_kana_fragments(fragments: list[str], *, double_written_sokuon: bool = False) -> list[str]:
-    """Remove automatic boundaries that split a kana unit."""
-    result: list[str] = []
-    index = 0
-    while index < len(fragments):
-        end = index
-        while end < len(fragments) and all(is_kana(char) for char in fragments[end]):
-            end += 1
-        if end == index:
-            result.append(fragments[index])
-            index += 1
+def prepare_kana_segments(
+    segments: list[KanaSegment], *, double_written_sokuon: bool = False,
+) -> list[KanaSegment]:
+    """Join source dependencies before querying readings for the resulting words."""
+    prepared: list[KanaSegment] = []
+    begin = 0
+    while begin < len(segments):
+        if not all(is_kana(char) for char in segments[begin].surface):
+            prepared.append(segments[begin])
+            begin += 1
             continue
-        run = fragments[index:end]
+        end = begin + 1
+        while (end < len(segments)
+               and segments[end - 1].end == segments[end].start
+               and all(is_kana(char) for char in segments[end].surface)):
+            end += 1
+        run = segments[begin:end]
         try:
-            units = parse_kana("".join(run), double_written_sokuon=double_written_sokuon)
+            units = parse_kana(
+                "".join(segment.surface for segment in run),
+                double_written_sokuon=double_written_sokuon,
+            )
         except KeyError:
-            # Dictionary readings may resolve source forms that are not kana syllables.
-            result.extend(run)
+            # Backend readings may resolve an unrecognized source spelling.
+            prepared.extend(run)
         else:
             offset = 0
             unit_index = 0
-            for fragment in run:
+            for segment in run:
                 while unit_index < len(units) and units[unit_index].end <= offset:
                     unit_index += 1
                 if (unit_index < len(units)
                         and units[unit_index].start < offset < units[unit_index].end):
-                    result[-1] += fragment
+                    previous = prepared[-1]
+                    # Metadata for the old words is invalid after changing their boundaries.
+                    prepared[-1] = KanaSegment(
+                        previous.start, segment.end, previous.surface + segment.surface,
+                    )
                 else:
-                    result.append(fragment)
-                offset += len(fragment)
-        index = end
-    return result
+                    prepared.append(segment)
+                offset += len(segment.surface)
+        begin = end
+    return prepared
