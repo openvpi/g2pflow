@@ -661,29 +661,74 @@ def test_failed_download_leaves_the_cached_model_intact(tmp_path, monkeypatch):
     assert not model.with_suffix(".onnx.staged").exists()
 
 
-def test_beam_size_caps_kana_word_candidates(dictionary):
+def test_beam_size_caps_kana_word_candidates(dictionary, tmp_path):
     """beam_size caps the final list; 1 keeps only the contextual reading."""
     dict_path = dictionary("ha\th a\nwa\tw a\n")
+    model = tmp_path / "model.onnx"
+    lexicon = tmp_path / "lexicon.txz"
+    model.write_bytes(b"stub")
+    lexicon.write_bytes(b"stub")
 
-    one = JapaneseKashiConverter(str(dict_path), beam_size=1)
-    readings = one._kana_readings("は", "ワ")
-    assert len(readings) == 1
-    assert _first_path_phones(readings[0]) == "wa"
+    def converted(beam):
+        converter = JapaneseKashiConverter(
+            str(dict_path), beam_size=beam, model_path=str(model),
+            lexicon_path=str(lexicon))
+        converter._segmenter = _FakeSegmenter({"は": [(0, 1, "は", "ワ")]})
+        converter._runtime = _FakeRuntime({"は": [("は", ["は"])]})
+        return converter.convert("は")
 
-    two = JapaneseKashiConverter(str(dict_path), beam_size=2)
-    readings = two._kana_readings("は", "ワ")
-    assert [_first_path_phones(r) for r in readings] == ["wa", "ha"]
+    one = converted(1)
+    assert len(one) == 1 and len(one[0].readings) == 1
+    assert phones(one[0]) == [["w", "a"]]
+
+    two = converted(2)
+    assert [phones_of(reading) for reading in two[0].readings] == [["wa"], ["ha"]]
 
 
-def test_beam_size_caps_kanji_word_candidates(dictionary):
+def test_beam_size_caps_kanji_word_candidates(dictionary, tmp_path):
     dict_path = dictionary("ki\tk i\nka\tk a\n")
+    model = tmp_path / "model.onnx"
+    lexicon = tmp_path / "lexicon.txz"
+    model.write_bytes(b"stub")
+    lexicon.write_bytes(b"stub")
 
-    converter = JapaneseKashiConverter(str(dict_path), beam_size=1)
-    candidates = [{"reading": "キ"}, {"reading": "カ"}]
-    readings = converter._kanji_readings("木", candidates, "キ", "キ")
-    assert len(readings) == 1
-    assert _first_path_phones(readings[0]) == "ki"
+    converter = JapaneseKashiConverter(
+        str(dict_path), beam_size=1, model_path=str(model),
+        lexicon_path=str(lexicon))
+    converter._segmenter = _FakeSegmenter({"木": [(0, 1, "木", "キ")]})
+    converter._runtime = _FakeRuntime({"木": [("木", ["キ", "カ"])]})
+
+    words = converter.convert("木")
+    assert len(words) == 1 and len(words[0].readings) == 1
+    assert phones(words[0]) == [["k", "i"]]
 
 
-def _first_path_phones(reading):
-    return "".join("".join(group.phonemes) for group in reading.paths[0])
+def test_beam_size_caps_a_fixed_word(dictionary, tmp_path):
+    """convert_word and the PFML fixed-word route share the same cap."""
+    dict_path = dictionary("ha\th a\nwa\tw a\n")
+    model = tmp_path / "model.onnx"
+    lexicon = tmp_path / "lexicon.txz"
+    model.write_bytes(b"stub")
+    lexicon.write_bytes(b"stub")
+
+    converter = JapaneseKashiConverter(
+        str(dict_path), beam_size=1, model_path=str(model),
+        lexicon_path=str(lexicon))
+    converter._segmenter = _FixedWordSegmenter({"は": ["ワ", "ハ"]})
+
+    word = converter.convert_word("は")
+    assert word is not None and len(word.readings) == 1
+    assert phones(word) == [["w", "a"]]
+
+
+class _FixedWordSegmenter(_FakeSegmenter):
+    def __init__(self, prons):
+        super().__init__({})
+        self.prons = prons
+
+    def whole_word_readings(self, text, nbest=8):
+        return self.prons.get(text, [])
+
+
+def phones_of(reading):
+    return ["".join(group.phonemes) for group in reading.paths[0]]

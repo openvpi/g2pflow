@@ -5,14 +5,6 @@ from pathlib import Path
 
 import numpy as np
 
-try:
-    import onnxruntime as ort
-except ImportError as exc:  # pragma: no cover
-    raise ImportError(
-        "japanese-kashi requires optional dependencies. Install them with: "
-        'python -m pip install "g2pflow[kashi]"'
-    ) from exc
-
 from .constants import MAX_EDGES, READING_LEN, SEQ_LEN
 from .decoder import decode_beam
 from .lexicon import (
@@ -128,6 +120,13 @@ class G2POnnxRuntime:
         self.vocab = {token: index for index, token in enumerate(vocab)}
         self.unk_id = int(self.vocab.get("[UNK]", 1))
         self.lexicon = UnifiedLexicon(self.table, use_copy=False)
+        try:
+            import onnxruntime as ort
+        except ImportError as exc:
+            raise ImportError(
+                "japanese-kashi requires optional dependencies. Install them "
+                'with: python -m pip install "g2pflow[kashi]"'
+            ) from exc
         providers = ort.get_available_providers()
         use = ["DmlExecutionProvider", "CPUExecutionProvider"] \
             if prefer_dml and "DmlExecutionProvider" in providers \
