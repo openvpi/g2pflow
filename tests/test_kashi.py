@@ -732,3 +732,25 @@ class _FixedWordSegmenter(_FakeSegmenter):
 
 def phones_of(reading):
     return ["".join(group.phonemes) for group in reading.paths[0]]
+
+
+def test_missing_runtime_fails_before_downloading(kana_dict, tmp_path,
+                                                  monkeypatch):
+    """Without onnxruntime the converter must not fetch the model first."""
+    import importlib.util
+    import g2pflow.converters.kashi as kashi
+
+    real_find = importlib.util.find_spec
+    monkeypatch.setattr(
+        importlib.util, "find_spec",
+        lambda name, *a, **k: None if name == "onnxruntime"
+        else real_find(name, *a, **k))
+    fetched = []
+    monkeypatch.setattr(kashi, "_install",
+                        lambda url, path, **kw: fetched.append(url))
+
+    converter = JapaneseKashiConverter(str(kana_dict),
+                                       cache_dir=str(tmp_path))
+    with pytest.raises(ImportError, match=r"g2pflow\[kashi\]"):
+        converter._get_runtime()
+    assert fetched == []

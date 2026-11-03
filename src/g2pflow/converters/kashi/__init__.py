@@ -5,6 +5,7 @@ readings through the Kana phoneme stage.
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import shutil
 import urllib.request
@@ -161,6 +162,11 @@ class JapaneseKashiConverter(Converter):
     def _get_runtime(self):
         if self._runtime is not None:
             return self._runtime
+        # Fail before fetching ~141 MB the runtime could never load.
+        if importlib.util.find_spec("onnxruntime") is None:
+            raise ImportError(
+                "japanese-kashi requires optional dependencies. Install them "
+                'with: python -m pip install "g2pflow[kashi]"')
         # Caller-supplied files are never touched.
         user_missing = [
             path for path, managed in (
