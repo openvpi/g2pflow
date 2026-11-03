@@ -290,10 +290,7 @@ def _prune_key(edge: Edge):
 
 
 def enforce_edge_cap(edges: list[Edge]) -> list[Edge]:
-    """Cap the graph after additive derivation, keeping COPY edges.
-
-    Text longer than MAX_EDGES characters must be built per window.
-    """
+    """Cap the graph after additive derivation, keeping COPY edges."""
     if len(edges) <= MAX_EDGES:
         return edges
     copies = [edge for edge in edges if edge.source == "copy"]

@@ -57,10 +57,7 @@ def _is_stale(path: Path) -> bool:
 
 
 def _install(url: str, path: Path, *, stale=None) -> None:
-    """Download *url* and move it into place only after the transfer succeeded.
-
-    With *stale*, skip when a concurrent worker already refreshed the file.
-    """
+    """Download *url* and move it into place once the transfer succeeded."""
     if stale is not None and not stale(path):
         return
     print(f"[g2pflow] downloading {url} ...", flush=True)
@@ -125,7 +122,7 @@ class JapaneseKashiConverter(Converter):
     """Japanese G2P readings via the kashi-g2p ONNX model.
     *dict_path*: romaji-to-phoneme dictionary; *model_path* / *lexicon_path* /
     *cache_dir* / *unidic_dir*: auto-download resources; *beam_size* caps
-    candidates per word; 1 yields the best reading only.
+    candidates per word.
     """
 
     def __init__(self, dict_path: str, *,
@@ -139,7 +136,6 @@ class JapaneseKashiConverter(Converter):
         cache = Path(cache_dir) if cache_dir else _default_cache_dir() / "kashi"
         cache = cache / _RELEASE_TAG
         # Only files this package placed in its own cache may be replaced.
-        # Caller-supplied paths belong to the caller.
         self._model_is_managed = model_path is None
         self._lexicon_is_managed = lexicon_path is None
         self._model_path = Path(model_path) if model_path else cache / "model.onnx"
@@ -162,8 +158,7 @@ class JapaneseKashiConverter(Converter):
     def _get_runtime(self):
         if self._runtime is not None:
             return self._runtime
-        # Caller-supplied files are never touched. Only cache entries this
-        # package manages may be refreshed when out of date.
+        # Caller-supplied files are never touched.
         user_missing = [
             path for path, managed in (
                 (self._model_path, self._model_is_managed),
@@ -248,10 +243,7 @@ class JapaneseKashiConverter(Converter):
 
     def _kanji_readings(self, surface: str, candidates: list[dict],
                         kana: str, pron: str) -> list[G2PReading]:
-        """Model candidates converted like japanese-mecab.
-        A candidate matching UniDic's kana uses UniDic's pron; others are kept
-        verbatim.
-        """
+        """Convert model candidates, taking UniDic's pron when they agree."""
         readings = []
         seen = set()
         for candidate in candidates:

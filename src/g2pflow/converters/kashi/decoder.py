@@ -1,7 +1,5 @@
 """Beam-search path decoding over the candidate lattice."""
 
-import math
-
 from .lexicon import Edge
 
 

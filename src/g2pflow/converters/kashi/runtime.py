@@ -1,7 +1,6 @@
 """ONNX scoring and decoding runtime for kashi-g2p."""
 
 import lzma
-from itertools import product
 from pathlib import Path
 
 import numpy as np
@@ -33,9 +32,7 @@ _BUNDLE_END = "##end"
 def windows_from_segments(segments, length: int) -> list[tuple[int, int]]:
     """Split ``[0, length)`` at fixed-word boundaries into <=SEQ_LEN windows.
 
-    Window edges are segment boundaries whenever possible, so no fixed word is
-    bisected.  A segment longer than the model window is split and decoded
-    chunk by chunk.
+    A segment longer than the model window is split and decoded per chunk.
     """
     if length <= 0:
         return []
@@ -86,46 +83,6 @@ def _segment_contained(edges: list[Edge], segments, start: int,
             if 0 <= edge.start < len(segment_end)
             and segment_end[edge.start] > 0
             and edge.end <= segment_end[edge.start]]
-
-
-def safe_windows(text: str, edges: list[Edge]) -> list[tuple[int, int]]:
-    if len(text) <= SEQ_LEN:
-        return [(0, len(text))]
-    windows = []
-    start = 0
-    while start < len(text):
-        limit = min(len(text), start + SEQ_LEN)
-        end = limit
-        if limit < len(text):
-            while True:
-                crossing = [e for e in edges
-                            if e.start < end < e.end and e.end > start]
-                if not crossing:
-                    break
-                moved = min(e.start for e in crossing)
-                if moved >= end:
-                    raise RuntimeError("safe window boundary did not advance")
-                end = moved
-        if end <= start:
-            raise ValueError(
-                "provider edge exceeds the window limit; no safe split")
-        windows.append((start, end))
-        start = end
-    return windows
-
-
-def local_edges(text: str, edges: list[Edge], start: int, end: int) -> list[Edge]:
-    result = []
-    for edge in edges:
-        if start <= edge.start and edge.end <= end:
-            result.append(Edge(edge.start - start, edge.end - start,
-                               edge.surface, edge.reading, edge.source,
-                               edge.prior, edge.confidence, edge.locked))
-        elif edge.start < end and start < edge.end:
-            raise RuntimeError("internal error: a window bisected an edge")
-    if not result:
-        raise ValueError("no edges for a safe window")
-    return result
 
 
 def _load_bundle(bundle_path: Path):
@@ -246,10 +203,7 @@ class G2POnnxRuntime:
         return scores[0][:len(edges)]
 
     def predict_words(self, text: str, segments, *, beam_size: int = 16) -> list[dict]:
-        """Per-word N-best readings with boundaries frozen to ``segments``.
-        Candidates are the top ``beam_size`` paths through each segment's
-        sub-lattice, ranked by the in-context model score.
-        """
+        """Per-word N-best readings with boundaries frozen to ``segments``."""
         if not text:
             return []
         # One graph per fixed-word window: a global graph can exceed MAX_EDGES.
@@ -305,8 +259,7 @@ class G2POnnxRuntime:
                     if len(candidates) >= beam_size:
                         break
             elif chunks:
-                # Chunks are scored by separate forward passes, so decode them
-                # independently and join the best paths left to right.
+                # Each chunk was scored separately; join the best paths.
                 combos: list[tuple[float, str]] = [(0.0, "")]
                 for chunk_edges, chunk_scores in chunks:
                     low = min(edge.start for edge in chunk_edges)

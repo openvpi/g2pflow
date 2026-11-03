@@ -2,7 +2,7 @@
 
 import pytest
 
-from g2pflow import G2PConversionError, G2PGroup, G2PPipeline
+from g2pflow import G2PConversionError, G2PGroup
 from g2pflow.converters.kashi import MODEL_URL, LEXICON_URL, JapaneseKashiConverter
 from g2pflow.converters.kashi.segmentation import Segment
 
