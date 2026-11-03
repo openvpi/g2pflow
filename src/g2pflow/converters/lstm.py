@@ -26,8 +26,6 @@ class _Beam:
 
     @property
     def normalized_score(self) -> float:
-        # Unlike upstream LstmG2p, divide the cumulative log probability
-        # directly: multiplying it by the old length counts it again.
         # Exclude BOS from the generated sequence length; include EOS.
         return self.score / max(1, len(self.tokens) - 1)
 

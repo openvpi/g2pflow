@@ -50,35 +50,24 @@ def test_source_units_are_prepared_before_backend_readings(
     assert backend.received_segments == [KanaSegment(0, len(text), text)]
 
 
-@pytest.mark.parametrize("include_surface", [False, True])
-@pytest.mark.parametrize("text,kana,pron,expected", [
-    ("きょう", "キョウ", "キョー", ["kyo"]),
-    ("ちょうど", "チョウド", "チョード", ["cho", "do"]),
-    ("キャット", "キャット", "キャット", ["kya", "cl", "to"]),
+@pytest.mark.parametrize("text,kana,pron,include_surface,expected", [
+    ("きょう", "キョウ", "キョー", False, [["kyo"]]),
+    ("ちょうど", "チョウド", "チョード", False, [["cho", "do"]]),
+    ("きょう", "キョウ", "キョー", True, [["kyo"], ["kyo", "u"]]),
+    ("は", "ハ", "ワ", True, [["wa"], ["ha"]]),
+    ("へ", "ヘ", "エ", True, [["e"], ["he"]]),
+    ("キャット", "キャット", "キャット", True, [["kya", "cl", "to"]]),
 ])
-def test_intact_kana_words_keep_contextual_pronunciations(
-    dictionary, include_surface, text, kana, pron, expected,
+def test_contextual_and_literal_readings(
+    dictionary, text, kana, pron, include_surface, expected,
 ):
-    path = dictionary("kyo\tKYO\ncho\tCHO\ndo\tDO\nkya\tKYA\ncl\tCL\nto\tTO\nu\tU\n")
-    backend = ReadingBackend(
-        path, [KanaSegment(0, len(text), text, pron, kana)],
-        {text: [KanaReading(kana)]}, include_surface=include_surface, max_readings=1,
+    path = dictionary(
+        "wa\tWA\nha\tHA\ne\tE\nhe\tHE\nkyo\tKYO\nu\tU\n"
+        "cho\tCHO\ndo\tDO\nkya\tKYA\ncl\tCL\nto\tTO\n",
     )
-    assert scripts(backend.convert(text)[0]) == [expected]
-
-
-@pytest.mark.parametrize("text,kana,pron,expected", [
-    ("は", "ハ", "ワ", [["wa"], ["ha"]]),
-    ("へ", "ヘ", "エ", [["e"], ["he"]]),
-    ("きょう", "キョウ", "キョー", [["kyo"], ["kyo", "u"]]),
-])
-def test_surface_readings_remain_literal_with_reference_metadata(
-    dictionary, text, kana, pron, expected,
-):
-    path = dictionary("wa\tWA\nha\tHA\ne\tE\nhe\tHE\nkyo\tKYO\nu\tU\n")
     backend = ReadingBackend(
         path, [KanaSegment(0, len(text), text, pron, kana)],
-        {text: [KanaReading(kana)]}, include_surface=True,
+        {text: [KanaReading(kana)]}, include_surface=include_surface,
     )
     assert scripts(backend.convert(text)[0]) == expected
 
@@ -121,6 +110,25 @@ def test_context_does_not_cross_source_gaps(dictionary):
     ], {})
     with pytest.raises(KeyError, match="preceding syllable"):
         backend.convert("か ゞ")
+
+
+def test_iteration_follows_each_candidate(dictionary):
+    backend = ReadingBackend(dictionary("ka\tKA\nga\tGA\nsa\tSA\nza\tZA\nme\tME\n"), [
+        KanaSegment(0, 1, "語"), KanaSegment(1, 2, "ゞ"), KanaSegment(2, 3, "め"),
+    ], {"語": [KanaReading("カ"), KanaReading("サ")], "め": [KanaReading("メ")]})
+    words = backend.convert("語ゞめ")
+    assert [word.text for word in words] == ["語ゞ", "め"]
+    assert scripts(words[0]) == [["ka", "ga"], ["sa", "za"]]
+
+
+def test_sokuon_dependency_preserves_candidate_choices(dictionary):
+    backend = ReadingBackend(dictionary("ta\tTA\nkka\tKKA\ncl\tCL\na\tA\n"), [
+        KanaSegment(0, 1, "甲"), KanaSegment(1, 2, "乙"),
+    ], {"甲": [KanaReading("タッ")], "乙": [KanaReading("カ"), KanaReading("ア")]},
+        double_written_sokuon=True)
+    word, = backend.convert("甲乙")
+    assert word.text == "甲乙"
+    assert scripts(word) == [["ta", "kka"], ["ta", "cl", "a"]]
 
 
 def test_candidate_limit_deduplicates_before_truncating(dictionary):

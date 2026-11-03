@@ -11,16 +11,15 @@ can be combined in priority order for mixed-language text.
 ```shell
 pip install g2pflow
 pip install "g2pflow[ja]"    # MeCab and UniDic
+pip install "g2pflow[kashi]" # kashi-g2p
 pip install "g2pflow[lstm]"  # ONNX inference for LSTM converters
-pip install "g2pflow[all]"   # Both optional backends
+pip install "g2pflow[all]"   # All optional backends
 ```
 
-These are the intended PyPI installation commands. Before publication, install
-this checkout with `pip install -e .` (or `pip install -e ".[all,dev]"`).
+From a checkout, install with `pip install -e .` or `pip install -e ".[all,dev]"`.
 
-The base package depends only on Pydantic. NumPy and ONNX Runtime are loaded for
-LSTM OOV inference; filelock is loaded only when UniDic needs downloading.
-The `lstm` and `ja` extras install these respective optional dependencies.
+The base package depends only on Pydantic. Optional backends load their native
+dependencies when used; downloads require filelock.
 
 ## Quick start
 
@@ -100,7 +99,7 @@ not select candidates against audio or encode phones into model vocabulary IDs.
 | `yue-jyutping` | Cantonese text through jyutping | Script-to-phone `dict_path` |
 | `japanese-kana` | Kana through romaji | Script-to-phone `dict_path` |
 | `japanese-mecab` | Japanese word segmentation and readings | Script-to-phone `dict_path`; optional `unidic_dir` |
-| `japanese-kashi` | kashi-g2p context-scored Japanese readings, fixed UniDic boundaries (ONNX beam N-best, auto-download) | Script-to-phone `dict_path`; optional `model_path` / `lexicon_path` / `cache_dir`, `beam_size`, `unidic_dir` |
+| `japanese-kashi` | Japanese readings through kashi-g2p | Script-to-phone `dict_path`; optional `model_path`, `lexicon_path`, `unidic_dir` |
 | `lstm` | Dictionary lookup and ONNX OOV inference | `model_path`; optional `dict_path` |
 
 Preprocessors: `filter-punctuation`, `strip-whitespace`, `lowercase`,
@@ -108,8 +107,8 @@ Preprocessors: `filter-punctuation`, `strip-whitespace`, `lowercase`,
 
 Mandarin and Cantonese character/phrase reading data are bundled. The caller
 chooses the phoneme inventory through external pronunciation dictionaries.
-English ONNX models are external. The Japanese backend manages UniDic's
-first-use download and can also use a preinstalled directory. See
+English ONNX models are external. Japanese backends can download UniDic and
+kashi-g2p resources on first use or load caller-supplied files. See
 [resources and converter details](docs/usage.md).
 
 ## External plugins

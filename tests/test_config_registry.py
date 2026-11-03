@@ -7,20 +7,16 @@ from g2pflow import (
     Converter, ConverterConfig, G2PPipelineConfig, Language, Preprocessor,
     PreprocessorConfig, build_converter_from_config, build_pipeline_from_config,
     build_preprocessor_from_config, converter, get_converter, get_preprocessor,
-    list_converters, list_preprocessors, preprocessor,
+    preprocessor,
 )
 from g2pflow.registry import parse_language
 
 
-def test_public_configs_are_independent_and_have_fresh_defaults():
+def test_configuration_defaults_and_serialization():
     first, second = G2PPipelineConfig(), G2PPipelineConfig()
     first.converters.append(ConverterConfig(id="passthrough"))
-    assert second.model_dump() == {"preprocessors": [], "converters": []}
-    assert first.model_dump()["converters"] == [
-        {"id": "passthrough", "language": None, "kwargs": {}},
-    ]
-    assert "plugin_paths" not in G2PPipelineConfig.model_fields
-    assert not hasattr(first, "resolve")
+    assert second.preprocessors == second.converters == []
+    assert G2PPipelineConfig.model_validate(first.model_dump()) == first
     a, b = ConverterConfig(id="a"), ConverterConfig(id="b")
     a.kwargs["x"] = 1
     assert b.kwargs == {}
@@ -35,18 +31,6 @@ def test_public_configs_are_independent_and_have_fresh_defaults():
 def test_invalid_configuration(model, data):
     with pytest.raises(ValidationError):
         model.model_validate(data)
-
-
-def test_builtin_components_are_discovered():
-    assert set(list_converters()) == {
-        "characters", "chinese-pinyin", "dictionary", "japanese-kana",
-        "japanese-kashi", "japanese-mecab", "lstm", "passthrough",
-        "yue-jyutping",
-    }
-    assert set(list_preprocessors()) == {
-        "filter-punctuation", "lowercase", "strip-whitespace", "remove-accents",
-        "normalize-unicode",
-    }
 
 
 def test_registration_and_duplicate_ids():

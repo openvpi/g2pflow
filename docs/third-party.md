@@ -24,3 +24,7 @@ UniDic is obtained through its own package/downloader or provided by the caller;
 its data are not in this distribution. ONNX models, including
 [LstmG2p](https://github.com/wolfgitpr/LstmG2p) models, and the caller's phoneme
 mapping dictionaries are also external and retain their own licenses.
+
+The [kashi-g2p](https://github.com/Xiantaidu/kashi-g2p) model weights use
+Apache-2.0. Its external lexicon bundle includes JMdict/KANJIDIC2 (CC-BY-SA-4.0)
+and UniDic (BSD) derived data.

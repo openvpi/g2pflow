@@ -70,7 +70,7 @@ _PUNCT_OR_SPACE = frozenset(" \t\r\n、。！？!?…・~～-—")
 
 
 class UnifiedLexicon:
-    """Port of UnifiedLexiconProvider (pack + rules + prefix scan)."""
+    """Candidate lattice from word entries and alphanumeric prefixes."""
 
     def __init__(self, table: dict, *, use_copy: bool = False):
         self.table = {k: tuple(v) for k, v in table.items()}
@@ -191,7 +191,7 @@ def filter_truncated_okurigana(edges: list[Edge], text: str) -> list[Edge]:
 
 
 def filter_rendaku_traps(edges: list[Edge]) -> list[Edge]:
-    """Keep unvoiced rendaku siblings, down-weighted rather than deleted."""
+    """Down-weight unvoiced alternatives when a voiced reading shares the span."""
     by_span: dict[tuple[int, int], list[int]] = {}
     for index, edge in enumerate(edges):
         by_span.setdefault((edge.start, edge.end), []).append(index)

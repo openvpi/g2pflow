@@ -202,7 +202,7 @@ def prepare_kana_segments(
                 if (unit_index < len(units)
                         and units[unit_index].start < offset < units[unit_index].end):
                     previous = prepared[-1]
-                    # Metadata for the old words is invalid after changing their boundaries.
+                    # Boundary changes invalidate per-word pronunciation metadata.
                     prepared[-1] = KanaSegment(
                         previous.start, segment.end, previous.surface + segment.surface,
                     )

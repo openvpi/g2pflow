@@ -9,12 +9,10 @@ pytest --cov=g2pflow --cov-report=term-missing --cov-report=xml
 
 The default suite is offline. Small handwritten dictionaries and deterministic
 backend doubles exercise routing, configuration, plugin discovery, candidate
-structure, MeCab/UniDic lifecycle and LSTM beam behavior. Plugin tests include a
+structure, resource caching and model decoding. Plugin tests include a
 real `spawn` process. Tests write their fixtures into pytest's temporary folders.
-The `dev` extra includes NumPy to exercise the LSTM numerical code. Distribution
+The `dev` extra includes NumPy to exercise numerical code. Distribution
 tests separately verify installations with only the base Pydantic dependency.
-Python comments and docstrings use ASCII; text fixtures intentionally include
-non-ASCII input.
 
 ## Real-resource integration tests
 
@@ -24,6 +22,7 @@ Install `g2pflow[all]` and set these environment variables:
 | --- | --- |
 | `G2PFLOW_TEST_DICT_DIR` | `ds-zh-pinyin-lite.txt`, `jyutping_dict.txt`, `japanese_dict_full.txt`, `ds_cmudict-07b.txt` |
 | `G2PFLOW_TEST_LSTM_MODEL` | LstmG2p English `encoder.onnx`, `decoder.onnx`, `char.json`, `phonemes.json` |
+| `G2PFLOW_TEST_KASHI_MODEL` | kashi-g2p `model.onnx` and `lexicon.txz` |
 | `G2PFLOW_TEST_UNIDIC_DIR` | Full UniDic dictionary with `sys.dic` and `mecabrc` |
 
 ```shell
@@ -32,7 +31,7 @@ pytest --run-integration -m integration
 
 These explicitly requested tests fail if resources are absent, and never
 download them during the test. They check the reference pronunciation mappings
-and LstmG2p model described above, plus serialization after native initialization.
+and model outputs, plus serialization after native initialization.
 Regular tests do not depend on these files.
 
 PFML conformance and round-trip checks run in the default offline suite. They

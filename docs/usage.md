@@ -30,8 +30,6 @@ Ordinary relative paths remain relative to the current working directory.
 The input configuration is not mutated.
 
 YAML users can pass their loader's resulting dictionary to `model_validate()`.
-Use the pipeline mapping directly; no `binarizer.g2p` wrapper, inheritance or
-scope parameter is part of g2pflow.
 
 ## Routing and languages
 
@@ -117,67 +115,47 @@ raises `KeyError` instead of falling back to separate keys or guessed phonemes.
 
 ## Japanese MeCab and UniDic
 
-Install `g2pflow[ja]` for fugashi, UniDic and filelock. `japanese-mecab` accepts `dict_path`, `nbest=32`,
-`double_written_sokuon=False` and `unidic_dir=None`. MeCab supplies word surfaces
-and UniDic's `pron` readings; g2pflow converts each complete reading into grouped
-pronunciation paths using the same Kana implementation.
+Install `g2pflow[ja]` for fugashi, UniDic and filelock. `japanese-mecab` accepts
+`dict_path`, `nbest=32`, `double_written_sokuon=False` and `unidic_dir=None`.
+MeCab supplies word boundaries and UniDic readings; the shared Kana converter
+maps their pronunciations to dictionary paths. `nbest` controls how many UniDic
+analyses are considered for each word. Candidates must cover the whole word as
+one node. Empty, placeholder and duplicate readings are discarded.
 
-Importing g2pflow or constructing this converter does not load MeCab or download
-UniDic. Filelock is imported only when a default dictionary download is needed;
-an existing dictionary or explicit directory does not require it at runtime.
-The first conversion initializes the native tagger:
-
-1. With `unidic_dir`, load that directory without downloading a default dictionary.
-2. Otherwise use `unidic.DICDIR`, checking for `sys.dic` and `mecabrc`.
-3. If either is missing, acquire the parent directory's `download.lock`, check
-   again, then call UniDic's downloader. This serializes spawned workers.
-
-The default download needs network access and a writable UniDic installation
-directory. To prepare offline use ahead of time:
+UniDic is loaded on first conversion. Set `unidic_dir` to use a full dictionary
+directory, or let the converter use `unidic.DICDIR` and download missing files.
+Automatic downloads require network access and a writable UniDic installation
+directory. To prepare the default dictionary for offline use:
 
 ```shell
 python -m unidic download
 ```
 
-Alternatively provide an existing full UniDic directory through `unidic_dir`.
-Download and initialization errors propagate. No small dictionary is substituted
-automatically. Missing backend packages produce an installation hint for
-`g2pflow[ja]`.
-
-N-best candidates must cover the whole word as one node. Empty, placeholder and
-duplicate readings are discarded. Pure Kana without readings falls back to the
-Kana converter; unreadable non-Kana words raise `G2PConversionError`.
+Pure Kana without dictionary readings uses literal Kana conversion. Unreadable
+non-Kana words raise `G2PConversionError`.
 
 ## kashi-g2p (Japanese)
 
 Install `g2pflow[kashi]` for fugashi, UniDic, NumPy, ONNX Runtime and
 filelock. `japanese-kashi` accepts `dict_path`, `model_path=None`,
 `lexicon_path=None`, `cache_dir=None`, `prefer_dml=False`, `beam_size=16`
-and `unidic_dir=None`. Word boundaries are fixed by UniDic (fugashi); the
-kashi-g2p model only chooses readings inside those spans, and each word
-exposes beam-search N-best candidates in the same ``readings`` structure as
-`japanese-mecab`, converted into romaji scripts and phonemes from
-*dict_path*. `beam_size` caps the candidates per word; `beam_size=1`
-yields the best reading only — for a kana word that is the UniDic
-contextual reading, with the literal spelling dropped first.
+and `unidic_dir=None`. UniDic determines word boundaries; the model scores
+candidate readings within each word using sentence context. The shared Kana
+converter turns those readings into romaji keys and phoneme paths from
+`dict_path`. `beam_size` limits the final readings per word. Kana words prefer
+UniDic's contextual pronunciation and also retain their literal spelling;
+`beam_size=1` keeps the first supported reading.
 
-Like `japanese-mecab`, the converter claims Japanese-script runs only;
-latin, digits, punctuation and whitespace are routed to other converters
-by the pipeline, or raise `G2PConversionError` when no converter claims
-them.
+The model and lexicon are loaded when inference is needed. Omitted paths use files
+downloaded from the kashi-g2p release into a versioned directory under
+`cache_dir`. Its default is `~/.cache/g2pflow/kashi`, or
+`$G2PFLOW_CACHE_DIR/kashi` when that environment variable is set. Explicit
+`model_path` and `lexicon_path` values must point to existing files. UniDic
+uses the same directory and download options described above.
+Set `prefer_dml=True` to use DirectML when available on Windows.
 
-The ONNX model (~106 MB) and lexicon bundle (~11 MB) come from the
-kashi-g2p GitHub release. When `model_path` / `lexicon_path` are omitted
-or missing, they are downloaded once into `cache_dir` (default
-`~/.cache/g2pflow/kashi`, overridable with the `G2PFLOW_CACHE_DIR`
-environment variable) under a file lock. The UniDic dictionary for
-segmentation comes from the `unidic` package (downloaded on first use,
-mirroring `japanese-mecab`); pass `unidic_dir` to use an existing
-directory instead. Set `prefer_dml=True` on Windows machines with
-DirectML for GPU execution.
-
-The model weights are Apache-2.0; the lexicon bundle embeds
-JMdict/KANJIDIC2 (CC BY-SA 4.0) and UniDic (BSD) derived data.
+Both Japanese reading backends claim Japanese-script runs. Use other converters
+for Latin text and digits in mixed input, and preprocess punctuation as needed.
 
 ## LSTM ONNX inference
 

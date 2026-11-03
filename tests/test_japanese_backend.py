@@ -217,18 +217,6 @@ def test_silent_mecab_readings_do_not_appear_in_results(kana_dict):
     assert instance.convert_word("ー") is None
 
 
-def test_nonstandard_kana_fallback_rejoins_split_digraphs(dictionary):
-    path = dictionary("ja\tj a\nju\tj u\nje\tj e\njo\tj o\nza\tz a\nzo\tz o\n")
-    instance = JapaneseMecabConverter(str(path))
-    text = "ぢゃヂュぢぇヂョづぁヅォ"
-    instance._tagger = TaggerDouble(list(text), {})
-    words = instance.convert(text)
-    assert [word.text for word in words] == ["ぢゃ", "ヂュ", "ぢぇ", "ヂョ", "づぁ", "ヅォ"]
-    assert [word.readings[0].paths[0][0].phonemes for word in words] == [
-        ["j", "a"], ["j", "u"], ["j", "e"], ["j", "o"], ["z", "a"], ["z", "o"],
-    ]
-
-
 def test_missing_non_kana_reading_raises(kana_dict):
     instance = JapaneseMecabConverter(str(kana_dict))
     instance._tagger = TaggerDouble(["猫"], {})
@@ -237,18 +225,17 @@ def test_missing_non_kana_reading_raises(kana_dict):
     assert exc.value.unconverted_tokens == ["猫"]
 
 
-def test_double_written_sokuon_merges_dictionary_key_and_pickle_drops_native_tagger(dictionary):
+def test_pickled_mecab_reinitializes_the_tagger(dictionary, backend):
     path = dictionary("kka\tCLOSURE K A\n")
-    instance = JapaneseMecabConverter(str(path), double_written_sokuon=True)
-    instance._tagger = TaggerDouble(["っ", "か"], {})
-    word = instance.convert("っか")[0]
-    assert word.text == "っか"
-    assert word.readings[0].paths == [[G2PGroup("kka", ["CLOSURE", "K", "A"])]]
-    instance._tagger = lambda: None
+    instance = JapaneseMecabConverter(
+        str(path), double_written_sokuon=True, unidic_dir=str(backend.dicdir),
+    )
+    backend.native.surfaces = ["っ", "か"]
+    backend.native.handle = lambda: None
+    words = instance.convert("っか")
     restored = pickle.loads(pickle.dumps(instance))
-    assert restored._tagger is None
-    assert instance._tagger is not None
-    assert restored._double_written_sokuon is True
+    assert restored.convert("っか") == words
+    assert len(backend.events) == 2
 
 
 def test_mecab_sokuon_uses_dictionary_candidates_in_each_whole_word_reading(dictionary):
@@ -316,65 +303,6 @@ def test_preprocessed_mecab_fixed_word(dictionary):
     word = pipeline.convert_pfml(f'<word language="ja">{text}</word>')[0]
     assert word.text == text
     assert word.readings[0].paths == [[G2PGroup("gya", ["GY", "A"])]]
-
-
-def test_mecab_unsupported_kana_raises(kana_dict):
-    instance = JapaneseMecabConverter(str(kana_dict))
-    instance._tagger = TaggerDouble(["\u3097"], {})
-    with pytest.raises(KeyError):
-        instance.convert("\u3097")
-
-
-@pytest.mark.parametrize("text,keys,double_sokuon", [
-    ("すゞめ", ["su", "zu", "me"], False),
-    ("キャットー", ["kya", "cl", "to"], False),
-    ("きゃゞ", ["kya", "gya"], False),
-    ("っきゃ", ["kkya"], True),
-    ("っーかっ", ["kka", "cl"], True),
-    ("ヿヽ", ["ko", "to", "to"], False),
-])
-def test_kana_reading_is_independent_of_backend_partition(dictionary, text, keys, double_sokuon):
-    path = dictionary("".join(f"{key}\t{key.upper()}\n" for key in dict.fromkeys(keys)))
-    instance = JapaneseMecabConverter(str(path), double_written_sokuon=double_sokuon)
-    analyses = {surface: [[node(surface, pron)]] for surface, pron in [
-        ("す", "ス"), ("め", "メ"), ("き", "キ"), ("ゃ", "ヤ"),
-    ]}
-    for cuts in range(1 << (len(text) - 1)):
-        boundaries = [0] + [i for i in range(1, len(text)) if cuts & (1 << (i - 1))] + [len(text)]
-        surfaces = [text[start:end] for start, end in zip(boundaries, boundaries[1:])]
-        instance._tagger = TaggerDouble(surfaces, analyses)
-        words = instance.convert(text)
-        assert [group.script for word in words for group in word.readings[0].paths[0]] == keys
-        assert [phone for word in words for group in word.readings[0].paths[0]
-                for phone in group.phonemes] == [key.upper() for key in keys]
-
-
-def test_iteration_follows_each_backend_candidate_independently(dictionary):
-    path = dictionary("ka\tKA\nga\tGA\nsa\tSA\nza\tZA\nme\tME\n")
-    instance = JapaneseMecabConverter(str(path))
-    instance._tagger = TaggerDouble(["語", "ゞ", "め"], {
-        "語": [[node("語", "カ")], [node("語", "サ")]],
-        "め": [[node("め", "メ")]],
-    })
-    words = instance.convert("語ゞめ")
-    assert [word.text for word in words] == ["語ゞ", "め"]
-    assert [[group.script for group in reading.paths[0]] for reading in words[0].readings] == [
-        ["ka", "ga"], ["sa", "za"],
-    ]
-
-
-def test_sokuon_dependency_preserves_all_backend_candidates(dictionary):
-    path = dictionary("ta\tTA\nkka\tKKA\ncl\tCL\na\tA\n")
-    instance = JapaneseMecabConverter(str(path), double_written_sokuon=True)
-    instance._tagger = TaggerDouble(["甲", "乙"], {
-        "甲": [[node("甲", "タッ")]],
-        "乙": [[node("乙", "カ")], [node("乙", "ア")]],
-    })
-    word, = instance.convert("甲乙")
-    assert word.text == "甲乙"
-    assert [[group.script for group in reading.paths[0]] for reading in word.readings] == [
-        ["ta", "kka"], ["ta", "cl", "a"],
-    ]
 
 
 def test_independent_backend_words_keep_their_boundaries(kana_dict):

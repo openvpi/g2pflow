@@ -1,5 +1,6 @@
 """Japanese reading backends and shared kana-to-phoneme conversion."""
 
+import importlib.util
 from abc import abstractmethod
 from itertools import product
 from pathlib import Path
@@ -11,6 +12,7 @@ from .base import (
     compose_word,
 )
 from .dictionary import load_pronunciation_dict
+from .kashi import resources as kashi_resources
 from .text import find_run, is_kana
 
 
@@ -338,8 +340,101 @@ class JapaneseMecabConverter(JapaneseReadingConverter):
         return [self._word_readings(segment.surface) for segment in segments]
 
 
-# The kashi backend lives in its own package but registers here, alongside
-# the other Japanese converters.
-from .kashi import JapaneseKashiConverter  # noqa: E402
+@converter(id="japanese-kashi", language="ja,jpn")
+class JapaneseKashiConverter(JapaneseReadingConverter):
+    """Score kana readings within UniDic word boundaries using kashi-g2p.
 
-converter(id="japanese-kashi", language="ja,jpn")(JapaneseKashiConverter)
+    Model and lexicon files are downloaded to a versioned cache on first use
+    unless their paths are supplied. beam_size caps the readings per word.
+    """
+
+    def __init__(
+        self,
+        dict_path: str,
+        *,
+        model_path: str | None = None,
+        lexicon_path: str | None = None,
+        cache_dir: str | None = None,
+        prefer_dml: bool = False,
+        beam_size: int = 16,
+        unidic_dir: str | None = None,
+    ) -> None:
+        self._beam_size = max(1, int(beam_size))
+        super().__init__(dict_path, max_readings=self._beam_size, include_surface=True)
+        cache = Path(cache_dir) if cache_dir else kashi_resources.default_cache_dir() / "kashi"
+        cache = cache / kashi_resources.RELEASE_TAG
+        self._model_is_managed = model_path is None
+        self._lexicon_is_managed = lexicon_path is None
+        self._model_path = Path(model_path) if model_path else cache / "model.onnx"
+        self._lexicon_path = Path(lexicon_path) if lexicon_path else cache / "lexicon.txz"
+        self._prefer_dml = prefer_dml
+        self._unidic_dir = unidic_dir
+        self._runtime = None
+        self._segmenter = None
+
+    def _get_segmenter(self):
+        if self._segmenter is None:
+            from .kashi.segmentation import UnidicSegmenter
+
+            self._segmenter = UnidicSegmenter(self._unidic_dir)
+        return self._segmenter
+
+    def _get_runtime(self):
+        if self._runtime is not None:
+            return self._runtime
+        if importlib.util.find_spec("onnxruntime") is None:
+            raise ImportError(
+                "japanese-kashi requires optional dependencies. Install them with: "
+                'python -m pip install "g2pflow[kashi]"'
+            )
+        missing = [
+            path for path, managed in (
+                (self._model_path, self._model_is_managed),
+                (self._lexicon_path, self._lexicon_is_managed),
+            )
+            if not managed and not path.is_file()
+        ]
+        if missing:
+            raise FileNotFoundError(
+                "kashi resource file not found: " + ", ".join(str(path) for path in missing)
+            )
+        self._fetch_managed()
+        from .kashi.runtime import G2POnnxRuntime
+
+        self._runtime = G2POnnxRuntime(
+            model_path=self._model_path,
+            bundle_path=self._lexicon_path,
+            prefer_dml=self._prefer_dml,
+        )
+        return self._runtime
+
+    def _fetch_managed(self) -> None:
+        if self._model_is_managed:
+            kashi_resources.install(
+                kashi_resources.MODEL_URL, self._model_path,
+                needed=kashi_resources.model_needs_download,
+            )
+        if self._lexicon_is_managed:
+            kashi_resources.install(
+                kashi_resources.LEXICON_URL, self._lexicon_path,
+                needed=lambda path: not path.is_file(),
+            )
+
+    def _segments(self, text: str) -> list[KanaSegment]:
+        return self._get_segmenter().segment(text)
+
+    def _readings(self, text: str, segments: list[KanaSegment]) -> list[list[KanaReading]]:
+        return [
+            [KanaReading(candidate["reading"]) for candidate in word["candidates"]]
+            for word in self._get_runtime().predict_words(text, segments, beam_size=self._beam_size)
+        ]
+
+    def _word_readings(self, text: str) -> list[KanaReading]:
+        return [KanaReading(pron) for pron in self._get_segmenter().whole_word_readings(text)]
+
+    def __getstate__(self) -> dict:
+        # Native handles are recreated in the receiving process.
+        state = self.__dict__.copy()
+        state["_runtime"] = None
+        state["_segmenter"] = None
+        return state
