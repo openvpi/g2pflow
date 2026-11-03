@@ -67,6 +67,30 @@ def test_intact_kana_words_keep_contextual_pronunciations(
     assert scripts(backend.convert(text)[0]) == [expected]
 
 
+@pytest.mark.parametrize("text,kana,pron,expected", [
+    ("は", "ハ", "ワ", [["wa"], ["ha"]]),
+    ("へ", "ヘ", "エ", [["e"], ["he"]]),
+    ("きょう", "キョウ", "キョー", [["kyo"], ["kyo", "u"]]),
+])
+def test_surface_readings_remain_literal_with_reference_metadata(
+    dictionary, text, kana, pron, expected,
+):
+    path = dictionary("wa\tWA\nha\tHA\ne\tE\nhe\tHE\nkyo\tKYO\nu\tU\n")
+    backend = ReadingBackend(
+        path, [KanaSegment(0, len(text), text, pron, kana)],
+        {text: [KanaReading(kana)]}, include_surface=True,
+    )
+    assert scripts(backend.convert(text)[0]) == expected
+
+
+def test_literal_surface_survives_an_unsupported_contextual_pronunciation(dictionary):
+    backend = ReadingBackend(
+        dictionary("ha\tHA\n"), [KanaSegment(0, 1, "は", "ワ", "ハ")],
+        {}, include_surface=True, max_readings=1,
+    )
+    assert scripts(backend.convert("は")[0]) == [["ha"]]
+
+
 def test_model_alternatives_only_use_matching_reference_pronunciation(dictionary):
     path = dictionary("kyo\tKYO\nko\tKO\nn\tN\nni\tNI\nchi\tCHI\nu\tU\n")
     backend = ReadingBackend(path, [KanaSegment(0, 2, "今日", "キョー", "キョウ")], {

@@ -94,7 +94,7 @@ class JapaneseKanaConverter(Converter):
                 readings = []
                 if _kana_only(segment.pron):
                     readings.append(KanaReading(segment.kana or segment.surface, segment.pron))
-                readings.append(KanaReading(segment.surface))
+                readings.append(KanaReading(segment.surface, pronunciation=segment.surface))
             spellings = []
             for candidate in readings:
                 spelling = candidate.kana
