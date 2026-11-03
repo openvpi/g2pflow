@@ -754,3 +754,58 @@ def test_missing_runtime_fails_before_downloading(kana_dict, tmp_path,
     with pytest.raises(ImportError, match=r"g2pflow\[kashi\]"):
         converter._get_runtime()
     assert fetched == []
+
+
+def test_long_vowel_keeps_the_whole_word_pron(dictionary, tmp_path):
+    """A complete word keeps UniDic's pron; only split units merge first."""
+    model = tmp_path / "model.onnx"
+    lexicon = tmp_path / "lexicon.txz"
+    model.write_bytes(b"stub")
+    lexicon.write_bytes(b"stub")
+    converter = JapaneseKashiConverter(
+        str(dictionary("kyo\tk y o\n", "long.txt")), beam_size=16,
+        model_path=str(model), lexicon_path=str(lexicon))
+    converter._segmenter = _FakeSegmenter({"きょう": [(0, 3, "きょう", "キョー")]})
+    converter._runtime = _FakeRuntime({"きょう": [("きょう", ["きょう"])]})
+
+    words = converter.convert("きょう")
+    assert phones_candidates(words[0])[0] == ["kyo"]
+
+
+def test_iteration_mark_merges_before_choosing_the_reading(dictionary, tmp_path):
+    """The mark repeats the surface syllable, not a particle pron."""
+    model = tmp_path / "model.onnx"
+    lexicon = tmp_path / "lexicon.txz"
+    model.write_bytes(b"stub")
+    lexicon.write_bytes(b"stub")
+    converter = JapaneseKashiConverter(
+        str(dictionary("ha\th a\nwa\tw a\n", "iter.txt")), beam_size=1,
+        model_path=str(model), lexicon_path=str(lexicon))
+    converter._segmenter = _FakeSegmenter(
+        {"はゝ": [(0, 1, "は", "ワ"), (1, 2, "ゝ")]})
+    converter._runtime = _FakeRuntime({"はゝ": [("は", ["は"]), ("ゝ", ["ゝ"])]})
+
+    words = converter.convert("はゝ")
+    assert [word.text for word in words] == ["はゝ"]
+    assert phones(words[0]) == [["h", "a", "h", "a"]]
+
+
+def test_compose_fallback_respects_beam_size(dictionary, tmp_path):
+    """The no-whole-word fallback must cap the composed cross-product."""
+    model = tmp_path / "model.onnx"
+    lexicon = tmp_path / "lexicon.txz"
+    model.write_bytes(b"stub")
+    lexicon.write_bytes(b"stub")
+    converter = JapaneseKashiConverter(
+        str(dictionary("a\ta\ni\ti\nu\tu\ne\te\no\to\n", "comp.txt")),
+        beam_size=2, model_path=str(model), lexicon_path=str(lexicon))
+    converter._segmenter = _FakeSegmenter({"あ": [(0, 1, "あ", "")]})
+    converter._runtime = _FakeRuntime({"あ": [("あ", ["あ"])]})
+
+    word = converter.convert_word("あ")
+    assert word is not None and len(word.readings) <= 2
+
+
+def phones_candidates(word):
+    return [["".join(group.phonemes) for group in reading.paths[0]]
+            for reading in word.readings if reading.paths]
