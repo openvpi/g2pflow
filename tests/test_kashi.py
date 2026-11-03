@@ -1,0 +1,869 @@
+"""Offline tests for the japanese-kashi converter (no model download)."""
+
+import pytest
+
+from g2pflow import G2PConversionError, G2PGroup
+from g2pflow.converters._kana import KanaSegment
+from g2pflow.converters.kashi import MODEL_URL, LEXICON_URL, JapaneseKashiConverter
+
+
+class _FakeSegmenter:
+    def __init__(self, segments_by_text):
+        self.segments_by_text = segments_by_text
+        self.calls = []
+
+    def segment(self, text):
+        self.calls.append(text)
+        return [KanaSegment(*item)
+                for item in self.segments_by_text.get(text, [])]
+
+    def whole_word_readings(self, text, nbest=8):
+        return []
+
+
+class _FakeRuntime:
+    def __init__(self, words_by_text):
+        self.words_by_text = words_by_text
+        self.calls = []
+
+    def predict_words(self, text, segments, *, beam_size=16):
+        self.calls.append((text, len(segments), beam_size))
+        words = []
+        cursor = 0
+        for surface, readings in self.words_by_text.get(text, []):
+            words.append({
+                "surface": surface, "start": cursor,
+                "end": cursor + len(surface),
+                "candidates": [{"reading": reading, "score": -float(index)}
+                               for index, reading in enumerate(
+                                   readings[:beam_size])],
+            })
+            cursor += len(surface)
+        return words
+
+
+def phones(word):
+    return [[phone for group in path for phone in group.phonemes]
+            for reading in word.readings for path in reading.paths]
+
+
+@pytest.fixture
+def toshi_dict(dictionary):
+    return dictionary(
+        "a\ta\ni\ti\nu\tu\ne\te\no\to\nzu\tz u\nshi\tsh i\n"
+        "hi\th i\nga\tg a\nka\tk a\nne\tn e\nko\tk o\nru\tr u\n", "toshi.txt",
+    )
+
+
+@pytest.fixture
+def kashi_converter(kana_dict, tmp_path):
+    model = tmp_path / "model.onnx"
+    lexicon = tmp_path / "lexicon.txz"
+    model.write_bytes(b"stub")
+    lexicon.write_bytes(b"stub")
+    return JapaneseKashiConverter(str(kana_dict), model_path=str(model),
+                                  lexicon_path=str(lexicon))
+
+
+def test_release_urls():
+    assert MODEL_URL.endswith("v1.1.0/model.onnx")
+    assert LEXICON_URL.endswith("v1.1.0/lexicon.txz")
+
+
+def test_default_download_cache_is_versioned(kana_dict, tmp_path):
+    converter = JapaneseKashiConverter(str(kana_dict), cache_dir=str(tmp_path))
+    assert converter._model_path == tmp_path / "v1.1.0" / "model.onnx"
+    assert converter._lexicon_path == tmp_path / "v1.1.0" / "lexicon.txz"
+
+
+def test_find_claims_japanese_runs_only(kashi_converter):
+    assert kashi_converter.find("今日は良い天気ですね。") == (0, 10)
+    assert kashi_converter.find("I do Love もう止められない") == (10, 18)
+    assert kashi_converter.find("1人で行く") == (1, 5)
+    assert kashi_converter.find("Hello world") is None
+    assert kashi_converter.find("") is None
+
+
+def test_fixed_segmentation_words(kashi_converter):
+    segments = [(0, 1, "猫"), (1, 2, "が"), (2, 4, "好き")]
+    fake_seg = _FakeSegmenter({"猫が好き": segments})
+    fake_rt = _FakeRuntime({"猫が好き": [("猫", ["ねこ"]), ("が", ["が"]),
+                                        ("好き", ["すき"])]})
+    kashi_converter._segmenter = fake_seg
+    kashi_converter._runtime = fake_rt
+    words = kashi_converter.convert("猫が好き")
+    assert [word.text for word in words] == ["猫", "が", "好き"]
+    assert [phones(word) for word in words] == [
+        [["n", "e", "k", "o"]],
+        [["g", "a"]],
+        [["s", "u", "k", "i"]],
+    ]
+    assert fake_seg.calls == ["猫が好き"]
+    assert fake_rt.calls == [("猫が好き", 3, 16)]
+
+
+def test_word_candidates_match_mecab_nbest_format(toshi_dict, tmp_path):
+    model = tmp_path / "model.onnx"
+    lexicon = tmp_path / "lexicon.txz"
+    model.write_bytes(b"stub")
+    lexicon.write_bytes(b"stub")
+    converter = JapaneseKashiConverter(str(toshi_dict), model_path=str(model),
+                                       lexicon_path=str(lexicon))
+    converter._segmenter = _FakeSegmenter({"東": [(0, 1, "東")]})
+    converter._runtime = _FakeRuntime({"東": [("東", ["ひがし", "あず"])]})
+    words = converter.convert("東")
+    assert len(words) == 1
+    assert words[0].text == "東"
+    assert [reading.paths for reading in words[0].readings] == [
+        [[G2PGroup("hi", ["h", "i"]), G2PGroup("ga", ["g", "a"]),
+          G2PGroup("shi", ["sh", "i"])]],
+        [[G2PGroup("a", ["a"]), G2PGroup("zu", ["z", "u"])]],
+    ]
+    assert phones(words[0]) == [["h", "i", "g", "a", "sh", "i"],
+                                ["a", "z", "u"]]
+
+
+def test_duplicate_candidates_are_deduped(toshi_dict, tmp_path):
+    model = tmp_path / "model.onnx"
+    lexicon = tmp_path / "lexicon.txz"
+    model.write_bytes(b"stub")
+    lexicon.write_bytes(b"stub")
+    converter = JapaneseKashiConverter(str(toshi_dict), model_path=str(model),
+                                       lexicon_path=str(lexicon))
+    converter._segmenter = _FakeSegmenter({"東": [(0, 1, "東")]})
+    converter._runtime = _FakeRuntime({"東": [("東", ["ひがし", "ひがし", "あず"])]})
+    words = converter.convert("東")
+    assert len(words[0].readings) == 2
+
+
+def test_beam_size_is_configurable(toshi_dict, tmp_path):
+    model = tmp_path / "model.onnx"
+    lexicon = tmp_path / "lexicon.txz"
+    model.write_bytes(b"stub")
+    lexicon.write_bytes(b"stub")
+    converter = JapaneseKashiConverter(str(toshi_dict), model_path=str(model),
+                                       lexicon_path=str(lexicon), beam_size=4)
+    fake_rt = _FakeRuntime({"東": [("東", ["ひがし", "あず", "ひがし",
+                                          "あず", "ひがし"])]})
+    converter._segmenter = _FakeSegmenter({"東": [(0, 1, "東")]})
+    converter._runtime = fake_rt
+    words = converter.convert("東")
+    assert len(words[0].readings) == 2
+    assert fake_rt.calls == [("東", 1, 4)]
+
+
+def test_long_vowels_follow_unidic_pron_like_mecab(dictionary, tmp_path):
+    model = tmp_path / "model.onnx"
+    lexicon = tmp_path / "lexicon.txz"
+    model.write_bytes(b"stub")
+    lexicon.write_bytes(b"stub")
+    kyo_dict = dictionary("kyo\tk y o\nu\tu\n", "kyo.txt")
+    converter = JapaneseKashiConverter(str(kyo_dict), model_path=str(model),
+                                       lexicon_path=str(lexicon))
+    converter._segmenter = _FakeSegmenter(
+        {"今日": [(0, 2, "今日", "キョー", "キョウ")]})
+    converter._runtime = _FakeRuntime({"今日": [("今日", ["きょう"])]})
+    words = converter.convert("今日")
+    assert len(words) == 1
+    assert phones(words[0]) == [["k", "y", "o"]]
+
+
+def test_kana_words_use_whole_word_readings(kashi_converter):
+    kashi_converter._segmenter = _FakeSegmenter({"キャット": [(0, 4, "キャット")]})
+    kashi_converter._runtime = _FakeRuntime({"キャット": [("キャット", ["キャット"])]})
+    words = kashi_converter.convert("キャット")
+    assert [word.text for word in words] == ["キャット"]
+    assert phones(words[0]) == [["ky", "a", "cl", "t", "o"]]
+
+
+def test_unreadable_kanji_raises_like_mecab(kashi_converter):
+    kashi_converter._segmenter = _FakeSegmenter({"珍": [(0, 1, "珍")]})
+    kashi_converter._runtime = _FakeRuntime({"珍": [("珍", ["珍"])]})
+    with pytest.raises(G2PConversionError):
+        kashi_converter.convert("珍")
+
+
+def test_candidates_with_kanji_are_dropped_whole(toshi_dict, tmp_path):
+    model = tmp_path / "model.onnx"
+    lexicon = tmp_path / "lexicon.txz"
+    model.write_bytes(b"stub")
+    lexicon.write_bytes(b"stub")
+    converter = JapaneseKashiConverter(str(toshi_dict), model_path=str(model),
+                                       lexicon_path=str(lexicon))
+    converter._segmenter = _FakeSegmenter({"光る": [(0, 2, "光る")]})
+    converter._runtime = _FakeRuntime(
+        {"光る": [("光る", ["ひかる", "光る"])]})
+    words = converter.convert("光る")
+    assert len(words) == 1
+    assert len(words[0].readings) == 1  # the kanji-bearing candidate is gone
+    assert phones(words[0]) == [["h", "i", "k", "a", "r", "u"]]
+
+
+def test_unknowable_low_rank_candidates_are_skipped(dictionary, tmp_path):
+    model = tmp_path / "model.onnx"
+    lexicon = tmp_path / "lexicon.txz"
+    model.write_bytes(b"stub")
+    lexicon.write_bytes(b"stub")
+    converter = JapaneseKashiConverter(str(dictionary("hi\th i\nka\tk a\n",
+                                                    "tiny.txt")),
+                                       model_path=str(model),
+                                       lexicon_path=str(lexicon))
+    converter._segmenter = _FakeSegmenter({"光か": [(0, 2, "光か")]})
+    converter._runtime = _FakeRuntime(
+        {"光か": [("光か", ["ひか", "ぐわ"])]})
+    words = converter.convert("光か")
+    assert len(words) == 1
+    assert len(words[0].readings) == 1  # ぐわ needs a missing dict key, skipped
+    assert phones(words[0]) == [["h", "i", "k", "a"]]
+
+
+def test_kana_words_handle_small_kana(dictionary, tmp_path):
+    model = tmp_path / "model.onnx"
+    lexicon = tmp_path / "lexicon.txz"
+    model.write_bytes(b"stub")
+    lexicon.write_bytes(b"stub")
+    converter = JapaneseKashiConverter(
+        str(dictionary("ne\tn e\ne\te\n", "fallback.txt")),
+        model_path=str(model), lexicon_path=str(lexicon))
+    converter._segmenter = _FakeSegmenter({"ねぇ": [(0, 2, "ねぇ")]})
+    converter._runtime = _FakeRuntime({"ねぇ": [("ねぇ", ["ねぇ"])]})
+    words = converter.convert("ねぇ")
+    assert [word.text for word in words] == ["ねぇ"]
+    assert phones(words[0]) == [["n", "e", "e"]]
+
+
+def test_kana_particles_use_unidic_pronunciation(dictionary, tmp_path):
+    model = tmp_path / "model.onnx"
+    lexicon = tmp_path / "lexicon.txz"
+    model.write_bytes(b"stub")
+    lexicon.write_bytes(b"stub")
+    converter = JapaneseKashiConverter(
+        str(dictionary("wa\tw a\nha\th a\ne\te\nhe\th e\n", "particles.txt")),
+        model_path=str(model), lexicon_path=str(lexicon))
+    for surface, pron, expected in (
+            ("は", "ワ", [["w", "a"], ["h", "a"]]),
+            ("へ", "エ", [["e"], ["h", "e"]])):
+        converter._segmenter = _FakeSegmenter({surface: [(0, 1, surface, pron)]})
+        converter._runtime = _FakeRuntime({surface: [(surface, [surface])]})
+        words = converter.convert(surface)
+        assert [word.text for word in words] == [surface]
+        assert phones(words[0]) == expected
+
+
+def test_kana_words_keep_unidic_boundaries(dictionary, tmp_path):
+    model = tmp_path / "model.onnx"
+    lexicon = tmp_path / "lexicon.txz"
+    model.write_bytes(b"stub")
+    lexicon.write_bytes(b"stub")
+    converter = JapaneseKashiConverter(
+        str(dictionary("sa\ts a\nyo\ty o\nna\tn a\nra\tr a\n", "kana.txt")),
+        model_path=str(model), lexicon_path=str(lexicon))
+    converter._segmenter = _FakeSegmenter(
+        {"さよなら": [(0, 4, "さよなら", "サヨナラ")]})
+    converter._runtime = _FakeRuntime(
+        {"さよなら": [("さよなら", ["さよなら"])]})
+    words = converter.convert("さよなら")
+    assert [word.text for word in words] == ["さよなら"]
+    assert len(words[0].readings) == 1
+    assert phones(words[0]) == [["s", "a", "y", "o", "n", "a", "r", "a"]]
+
+
+def test_kana_word_dictionary_gap_is_a_conversion_error(dictionary, tmp_path):
+    model = tmp_path / "model.onnx"
+    lexicon = tmp_path / "lexicon.txz"
+    model.write_bytes(b"stub")
+    lexicon.write_bytes(b"stub")
+    converter = JapaneseKashiConverter(
+        str(dictionary("ne\tn e\n", "gap.txt")),
+        model_path=str(model), lexicon_path=str(lexicon))
+    converter._segmenter = _FakeSegmenter({"ねぇ": [(0, 2, "ねぇ")]})
+    converter._runtime = _FakeRuntime({"ねぇ": [("ねぇ", ["ねぇ"])]})
+    with pytest.raises(G2PConversionError):
+        converter.convert("ねぇ")
+
+
+def test_empty_reading_omits_word(kashi_converter):
+    kashi_converter._segmenter = _FakeSegmenter({"": []})
+    kashi_converter._runtime = _FakeRuntime({"": []})
+    assert kashi_converter.convert("") == []
+
+
+def test_runtime_reuses_cached_instances(kashi_converter):
+    fake_rt = _FakeRuntime({"あ": [("あ", ["あ"])]})
+    fake_seg = _FakeSegmenter({"あ": [(0, 1, "あ")]})
+    kashi_converter._runtime = fake_rt
+    kashi_converter._segmenter = fake_seg
+    assert kashi_converter._get_runtime() is fake_rt
+    assert kashi_converter._get_segmenter() is fake_seg
+
+
+@pytest.mark.integration
+def test_real_model_end_to_end(kana_dict, tmp_path):
+    """Opt-in: downloads the real model (~106 MB) on first use."""
+    converter = JapaneseKashiConverter(str(kana_dict), cache_dir=str(tmp_path))
+    words = converter.convert("今日は良い天気ですね")
+    assert words and words[0].readings
+
+
+def test_kanji_candidates_match_unidic_long_vowels_only(dictionary, tmp_path):
+    model = tmp_path / "model.onnx"
+    lexicon = tmp_path / "lexicon.txz"
+    model.write_bytes(b"stub")
+    lexicon.write_bytes(b"stub")
+    table = dictionary("ta\tt a\nme\tm e\ni\ti\nki\tk i\nbi\tb i\n",
+                       "meta.txt")
+    converter = JapaneseKashiConverter(str(table), model_path=str(model),
+                                       lexicon_path=str(lexicon))
+    converter._segmenter = _FakeSegmenter(
+        {"ため息": [(0, 3, "ため息", "タメイキ", "タメイキ")]})
+    converter._runtime = _FakeRuntime(
+        {"ため息": [("ため息", ["ためいき", "たび"])]})
+    words = converter.convert("ため息")
+    assert phones(words[0]) == [["t", "a", "m", "e", "i", "k", "i"],
+                                ["t", "a", "b", "i"]]
+
+
+def test_non_matching_candidate_is_not_folded(dictionary, tmp_path):
+    model = tmp_path / "model.onnx"
+    lexicon = tmp_path / "lexicon.txz"
+    model.write_bytes(b"stub")
+    lexicon.write_bytes(b"stub")
+    table = dictionary("ka\tk a\nku\tk u\nme\tm e\n", "meta2.txt")
+    converter = JapaneseKashiConverter(str(table), model_path=str(model),
+                                       lexicon_path=str(lexicon))
+    converter._segmenter = _FakeSegmenter(
+        {"革命": [(0, 2, "革命", "カクメー", "カクメイ")]})
+    converter._runtime = _FakeRuntime(
+        {"革命": [("革命", ["かくめい"])]})
+    words = converter.convert("革命")
+    assert phones(words[0]) == [["k", "a", "k", "u", "m", "e"]]
+
+
+def test_windows_follow_segment_boundaries():
+    from g2pflow.converters.kashi.runtime import windows_from_segments
+    segments = [KanaSegment(i * 10, (i + 1) * 10, "x" * 10) for i in range(20)]
+    windows = windows_from_segments(segments, 200)
+    assert windows[0][0] == 0 and windows[-1][1] == 200
+    for start, end in windows:
+        assert 0 < end - start <= 64
+    assert all(any(start <= s.start and s.end <= end for start, end in windows)
+               for s in segments)
+
+
+def test_enforce_edge_cap_keeps_copies_and_bounds_others():
+    from g2pflow.converters.kashi.lexicon import Edge, enforce_edge_cap
+    edges = [Edge(i, i + 1, "x", "x", "copy", -1.0) for i in range(40)]
+    edges += [Edge(0, 1, "x", f"r{i}", "jmdict", 0.5) for i in range(400)]
+    capped = enforce_edge_cap(edges)
+    assert len(capped) == 256
+    assert sum(edge.source == "copy" for edge in capped) == 40
+
+
+def test_long_text_is_built_per_window_without_edge_cap_error():
+    from g2pflow.converters.kashi.lexicon import UnifiedLexicon
+    from g2pflow.converters.kashi.runtime import G2POnnxRuntime
+    text = "明日は晴れです" * 20
+    pack = {"明": (("あ", "jmdict", 0.5, 0.5),),
+            "日": (("ひ", "jmdict", 0.5, 0.5),)}
+    runtime = object.__new__(G2POnnxRuntime)
+    runtime.lexicon = UnifiedLexicon(pack, use_copy=False)
+    runtime._char_readings = {}
+    runtime._decomposition_cache = {}
+    runtime.score = lambda local_text, edges: [0.0] * len(edges)
+    segments = [KanaSegment(i, i + 1, char) for i, char in enumerate(text)]
+    windows = len(__import__(
+        "g2pflow.converters.kashi.runtime", fromlist=["windows_from_segments"]
+    ).windows_from_segments(segments, len(text)))
+    words = runtime.predict_words(text, segments, beam_size=4)
+    assert windows > 1
+    assert len(words) == len(text)
+
+
+def test_rendaku_trap_is_kept_and_downweighted():
+    from g2pflow.converters.kashi.lexicon import UnifiedLexicon, build_edges
+    pack = {
+        "中島": (("なかじま", "yomogi_dict", 0.6, 0.75),
+                ("なかしま", "yomogi_dict", 0.6, 0.75)),
+        "あ": (("あ", "copy", -1.0, 0.0),),
+    }
+    edges = {(edge.start, edge.end, edge.reading): edge
+             for edge in build_edges("あ中島", UnifiedLexicon(pack))}
+    unvoiced = edges[(1, 3, "なかしま")]
+    voiced = edges[(1, 3, "なかじま")]
+    assert unvoiced.prior == pytest.approx(0.4)
+    assert voiced.prior == pytest.approx(0.6)
+
+
+def test_convert_word_returns_one_fixed_word(dictionary, tmp_path):
+    model = tmp_path / "model.onnx"
+    lexicon = tmp_path / "lexicon.txz"
+    model.write_bytes(b"stub")
+    lexicon.write_bytes(b"stub")
+    table = dictionary(
+        "to\tt o\nu\tu\nkyo\tky o\nta\tt a\n", "fixed.txt")
+    converter = JapaneseKashiConverter(str(table), model_path=str(model),
+                                       lexicon_path=str(lexicon))
+    converter._segmenter = _FakeSegmenter({"東京都": [(0, 3, "東京都")]})
+    converter._runtime = _FakeRuntime(
+        {"東京都": [("東京都", ["とうきょうと"])]})
+    word = converter.convert_word("東京都")
+    assert word is not None and word.text == "東京都"
+    assert phones(word) == [["t", "o", "u", "ky", "o", "u", "t", "o"]]
+
+
+def test_getstate_drops_native_handles(kashi_converter):
+    kashi_converter._runtime = object()
+    kashi_converter._segmenter = object()
+    state = kashi_converter.__getstate__()
+    assert state["_runtime"] is None
+    assert state["_segmenter"] is None
+
+
+def test_converter_returns_input_text_verbatim(dictionary, tmp_path):
+    """Normalization belongs to a preprocessor, not to the converter."""
+    model = tmp_path / "model.onnx"
+    lexicon = tmp_path / "lexicon.txz"
+    model.write_bytes(b"stub")
+    lexicon.write_bytes(b"stub")
+    table = dictionary("ga\tg a\ncl\tcl\nko\tk o\nu\tu\n", "norm.txt")
+    converter = JapaneseKashiConverter(str(table), model_path=str(model),
+                                       lexicon_path=str(lexicon))
+    converter._segmenter = _FakeSegmenter(
+        {"が学校": [(0, 1, "が"), (1, 3, "学校")]})
+    converter._runtime = _FakeRuntime(
+        {"が学校": [("が", ["が"]), ("学校", ["がっこう"])]})
+    words = converter.convert("が学校")
+    assert [word.text for word in words] == ["が", "学校"]
+
+
+def test_unicode_preprocessor_normalizes_before_the_converter(
+        dictionary, tmp_path):
+    """The decomposed input reaches the converter already composed."""
+    from g2pflow import G2PPipeline
+    from g2pflow.preprocessors.simple import NormalizeUnicodePreprocessor
+
+    model = tmp_path / "model.onnx"
+    lexicon = tmp_path / "lexicon.txz"
+    model.write_bytes(b"stub")
+    lexicon.write_bytes(b"stub")
+    table = dictionary("ga\tg a\ncl\tcl\nko\tk o\nu\tu\n", "norm.txt")
+    converter = JapaneseKashiConverter(str(table), model_path=str(model),
+                                       lexicon_path=str(lexicon))
+    converter._segmenter = _FakeSegmenter(
+        {"が学校": [(0, 1, "が"), (1, 3, "学校")]})
+    converter._runtime = _FakeRuntime(
+        {"が学校": [("が", ["が"]), ("学校", ["がっこう"])]})
+    pipeline = G2PPipeline(
+        converters=[converter],
+        preprocessors=[NormalizeUnicodePreprocessor("NFC")])
+    words = pipeline.convert("が学校".replace("が", "か\u3099"))
+    assert [word.text for word in words] == ["が", "学校"]
+
+
+def test_pipeline_config_integration(kana_dict, tmp_path):
+    model = tmp_path / "model.onnx"
+    lexicon = tmp_path / "lexicon.txz"
+    model.write_bytes(b"stub")
+    lexicon.write_bytes(b"stub")
+    from g2pflow import G2PPipelineConfig, build_pipeline_from_config
+    pipeline = build_pipeline_from_config(G2PPipelineConfig.model_validate({
+        "converters": [{
+            "id": "japanese-kashi",
+            "language": "ja",
+            "kwargs": {"dict_path": str(kana_dict),
+                       "model_path": str(model),
+                       "lexicon_path": str(lexicon)},
+        }],
+    }))
+    pipeline._converters[0]._segmenter = _FakeSegmenter({"ネコが": [(0, 2, "ネコ"), (2, 3, "が")]})
+    pipeline._converters[0]._runtime = _FakeRuntime({"ネコが": [("ネコ", ["ねこ"]), ("が", ["が"])]})
+    words = pipeline.convert("ネコが", languages=["ja"])
+    assert [word.text for word in words] == ["ネコ", "が"]
+
+
+def test_merge_numeral_counters_does_not_cross_a_gap():
+    from g2pflow.converters.kashi.segmentation import merge_numeral_counters
+    text = "3 人"
+    segments = [KanaSegment(0, 1, "3"), KanaSegment(2, 3, "人")]
+    assert [segment.surface for segment in
+            merge_numeral_counters(segments, text)] == ["3", "人"]
+
+
+def test_windows_from_segments_chunks_a_trailing_gap():
+    from g2pflow.converters.kashi.runtime import windows_from_segments
+    segments = [KanaSegment(0, 70, "x" * 70)]
+    windows = windows_from_segments(segments, 200)
+    assert windows[0][0] == 0 and windows[-1][1] == 200
+    assert all(0 < end - start <= 64 for start, end in windows)
+
+
+def test_enforce_edge_cap_rejects_more_copies_than_cap():
+    from g2pflow.converters.kashi.lexicon import Edge, enforce_edge_cap
+    edges = [Edge(i, i + 1, "x", "x", "copy", -1.0) for i in range(300)]
+    with pytest.raises(ValueError, match="copy edges exceed"):
+        enforce_edge_cap(edges)
+
+
+def test_predict_words_skips_whitespace_segments():
+    from g2pflow.converters.kashi.lexicon import UnifiedLexicon
+    from g2pflow.converters.kashi.runtime import G2POnnxRuntime
+    runtime = object.__new__(G2POnnxRuntime)
+    runtime.lexicon = UnifiedLexicon({}, use_copy=False)
+    runtime._char_readings = {}
+    runtime._decomposition_cache = {}
+    runtime.score = lambda local_text, edges: [0.0] * len(edges)
+    segments = [KanaSegment(0, 1, "あ"), KanaSegment(1, 2, " "),
+                KanaSegment(2, 3, "い")]
+    words = runtime.predict_words("あ い", segments, beam_size=4)
+    assert [word["surface"] for word in words] == ["あ", "い"]
+    assert [(word["start"], word["end"]) for word in words] == [(0, 1), (2, 3)]
+
+
+def test_segment_longer_than_window_is_decoded_per_chunk():
+    from g2pflow.converters.kashi.lexicon import UnifiedLexicon
+    from g2pflow.converters.kashi.runtime import G2POnnxRuntime
+    text = "あ" * 80
+    runtime = object.__new__(G2POnnxRuntime)
+    runtime.lexicon = UnifiedLexicon({}, use_copy=False)
+    runtime._char_readings = {}
+    runtime._decomposition_cache = {}
+    runtime.score = lambda local_text, edges: [0.0] * len(edges)
+    words = runtime.predict_words(text, [KanaSegment(0, 80, text)], beam_size=4)
+    assert len(words) == 1
+    assert words[0]["candidates"]
+    assert words[0]["candidates"][0]["reading"] == text
+
+
+def test_cross_segment_edges_are_not_scored():
+    from g2pflow.converters.kashi.lexicon import UnifiedLexicon
+    from g2pflow.converters.kashi.runtime import G2POnnxRuntime
+    pack = {
+        "大学": (("だいがく", "jmdict", 0.8, 0.8),),
+        "生": (("せい", "jmdict", 0.8, 0.8),),
+        "大学生": (("だいがくせい", "jmdict", 0.9, 0.9),),
+    }
+    runtime = object.__new__(G2POnnxRuntime)
+    runtime.lexicon = UnifiedLexicon(pack, use_copy=False)
+    runtime._char_readings = {}
+    runtime._decomposition_cache = {}
+    seen = []
+
+    def score(local_text, edges):
+        seen.extend((edge.start, edge.end, edge.reading) for edge in edges)
+        return [0.0] * len(edges)
+
+    runtime.score = score
+    segments = [KanaSegment(0, 2, "大学"), KanaSegment(2, 3, "生")]
+    words = runtime.predict_words("大学生", segments, beam_size=4)
+    assert all(not (start < 2 < end) for start, end, _reading in seen)
+    assert "だいがくせい" not in {reading for _s, _e, reading in seen}
+    assert all(word["candidates"] for word in words)
+
+
+def test_runtime_features_have_no_component_channel():
+    from g2pflow.converters.kashi.runtime import G2POnnxRuntime
+
+    runtime = object.__new__(G2POnnxRuntime)
+    runtime.unk_id = 1
+    runtime.vocab = {"[UNK]": 1, "大": 5, "学": 6}
+
+    input_ids, attention, char_types = runtime._features("大学")
+    assert input_ids[0, 0] == 5 and input_ids[0, 1] == 6
+    assert attention[0, :2].all()
+
+
+def test_bundle_without_a_components_section_still_loads(tmp_path):
+    """Parsing must not require a components section."""
+    import lzma
+
+    from g2pflow.converters.kashi.runtime import _load_bundle
+
+    body = "\n".join([
+        "##kashi-g2p v1",
+        "##section pack",
+        "大学\tだいがく\tunidic\t1.0\t1.0",
+        "##section prior",
+        "大学\tだいがく\t1",
+        "##section vocab",
+        "大",
+        "学",
+        "##end",
+    ]) + "\n"
+    path = tmp_path / "lexicon.txz"
+    path.write_bytes(lzma.compress(body.encode("utf-8")))
+
+    table, prior, vocab = _load_bundle(path)
+    assert table["大学"] == (("だいがく", "unidic", 1.0, 1.0),)
+    assert prior[("大学", "だいがく")] == 1
+    assert vocab == ["大", "学"]
+
+
+def test_stale_cached_model_is_treated_as_missing(tmp_path, monkeypatch):
+    import g2pflow.converters.kashi as kashi
+
+    model = tmp_path / "model.onnx"
+    model.write_bytes(b"not really an onnx file")
+
+    # Unparsable cache cannot match the current signature.
+    assert kashi._model_is_current(model) is False
+
+    # A stamp alone is not enough: the file must still be there.
+    stamp = model.with_suffix(".onnx.inputs")
+    stamp.write_text(",".join(sorted(kashi._REQUIRED_MODEL_INPUTS)) + "\n",
+                     encoding="utf-8")
+    assert kashi._model_is_current(model) is True
+    model.unlink()
+    assert kashi._model_is_current(model) is False
+
+
+def test_caller_supplied_model_is_never_downloaded_over(kana_dict, tmp_path,
+                                                       monkeypatch):
+    """An explicit model_path is the caller's file; never replace it."""
+    import g2pflow.converters.kashi as kashi
+
+    model = tmp_path / "mine.onnx"
+    model.write_bytes(b"caller supplied, not a real export")
+    lexicon = tmp_path / "mine.txz"
+    lexicon.write_bytes(b"caller supplied")
+
+    calls = []
+    monkeypatch.setattr(kashi, "_download",
+                        lambda url, path, **kw: calls.append(url))
+
+    converter = JapaneseKashiConverter(str(kana_dict), model_path=str(model),
+                                       lexicon_path=str(lexicon))
+    assert converter._model_is_managed is False
+    assert converter._lexicon_is_managed is False
+    assert converter._needs_download() is False
+    converter._fetch_managed()
+    assert calls == []
+    assert model.stat().st_size == len(b"caller supplied, not a real export")
+
+
+def test_failed_download_leaves_the_cached_model_intact(tmp_path, monkeypatch):
+    """A stale managed cache is only replaced once the new file arrived."""
+    pytest.importorskip("filelock")
+    import g2pflow.converters.kashi as kashi
+
+    model = tmp_path / "model.onnx"
+    model.write_bytes(b"previous generation")
+
+    def fail(url, path, **kw):
+        raise IOError("simulated offline")
+
+    monkeypatch.setattr(kashi, "_download", fail)
+    try:
+        kashi._install(kashi.MODEL_URL, model,
+                       needed=kashi._model_needs_download)
+    except IOError:
+        pass
+    else:
+        raise AssertionError("expected the download failure to propagate")
+    assert model.read_bytes() == b"previous generation"
+    assert not model.with_suffix(".onnx.staged").exists()
+
+
+def test_shared_cache_downloads_the_lexicon_once(kana_dict, tmp_path, monkeypatch):
+    """Different model paths in one cache dir still share the lexicon lock."""
+    pytest.importorskip("filelock")
+    import threading
+    import time
+
+    import g2pflow.converters.kashi as kashi
+
+    entered = threading.Event()
+    release = threading.Event()
+    lexicon_calls = []
+
+    def slow_download(url, path, **kw):
+        if url == kashi.LEXICON_URL:
+            lexicon_calls.append(url)
+            entered.set()
+            release.wait(5)
+        path.write_bytes(b"downloaded")
+
+    monkeypatch.setattr(kashi, "_download", slow_download)
+
+    shared = JapaneseKashiConverter(str(kana_dict), cache_dir=str(tmp_path))
+    explicit = JapaneseKashiConverter(
+        str(kana_dict), model_path=str(tmp_path / "mine.onnx"),
+        cache_dir=str(tmp_path))
+    assert shared._lexicon_path == explicit._lexicon_path
+
+    errors = []
+
+    def fetch(converter):
+        try:
+            converter._fetch_managed()
+        except BaseException as exc:  # noqa: BLE001 - reported below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=fetch, args=(shared,)),
+               threading.Thread(target=fetch, args=(explicit,))]
+    threads[0].start()
+    assert entered.wait(5)
+    threads[1].start()
+    # The second instance must wait for the lexicon lock, not join the download.
+    time.sleep(0.2)
+    during = len(lexicon_calls)
+    release.set()
+    for thread in threads:
+        thread.join(10)
+
+    assert during == 1
+    assert len(lexicon_calls) == 1
+    assert errors == []
+    assert shared._lexicon_path.read_bytes() == b"downloaded"
+    assert not shared._lexicon_path.with_suffix(".txz.staged").exists()
+
+
+def test_beam_size_caps_kana_word_candidates(dictionary, tmp_path):
+    """beam_size caps the final list; 1 keeps only the contextual reading."""
+    dict_path = dictionary("ha\th a\nwa\tw a\n")
+    model = tmp_path / "model.onnx"
+    lexicon = tmp_path / "lexicon.txz"
+    model.write_bytes(b"stub")
+    lexicon.write_bytes(b"stub")
+
+    def converted(beam):
+        converter = JapaneseKashiConverter(
+            str(dict_path), beam_size=beam, model_path=str(model),
+            lexicon_path=str(lexicon))
+        converter._segmenter = _FakeSegmenter({"は": [(0, 1, "は", "ワ")]})
+        converter._runtime = _FakeRuntime({"は": [("は", ["は"])]})
+        return converter.convert("は")
+
+    one = converted(1)
+    assert len(one) == 1 and len(one[0].readings) == 1
+    assert phones(one[0]) == [["w", "a"]]
+
+    two = converted(2)
+    assert [phones_of(reading) for reading in two[0].readings] == [["wa"], ["ha"]]
+
+
+def test_beam_size_caps_kanji_word_candidates(dictionary, tmp_path):
+    dict_path = dictionary("ki\tk i\nka\tk a\n")
+    model = tmp_path / "model.onnx"
+    lexicon = tmp_path / "lexicon.txz"
+    model.write_bytes(b"stub")
+    lexicon.write_bytes(b"stub")
+
+    converter = JapaneseKashiConverter(
+        str(dict_path), beam_size=1, model_path=str(model),
+        lexicon_path=str(lexicon))
+    converter._segmenter = _FakeSegmenter({"木": [(0, 1, "木", "キ")]})
+    converter._runtime = _FakeRuntime({"木": [("木", ["キ", "カ"])]})
+
+    words = converter.convert("木")
+    assert len(words) == 1 and len(words[0].readings) == 1
+    assert phones(words[0]) == [["k", "i"]]
+
+
+def test_beam_size_caps_a_fixed_word(dictionary, tmp_path):
+    """convert_word and the PFML fixed-word route share the same cap."""
+    dict_path = dictionary("ha\th a\nwa\tw a\n")
+    model = tmp_path / "model.onnx"
+    lexicon = tmp_path / "lexicon.txz"
+    model.write_bytes(b"stub")
+    lexicon.write_bytes(b"stub")
+
+    converter = JapaneseKashiConverter(
+        str(dict_path), beam_size=1, model_path=str(model),
+        lexicon_path=str(lexicon))
+    converter._segmenter = _FixedWordSegmenter({"は": ["ワ", "ハ"]})
+
+    word = converter.convert_word("は")
+    assert word is not None and len(word.readings) == 1
+    assert phones(word) == [["w", "a"]]
+
+
+class _FixedWordSegmenter(_FakeSegmenter):
+    def __init__(self, prons):
+        super().__init__({})
+        self.prons = prons
+
+    def whole_word_readings(self, text, nbest=8):
+        return self.prons.get(text, [])
+
+
+def phones_of(reading):
+    return ["".join(group.phonemes) for group in reading.paths[0]]
+
+
+def test_missing_runtime_fails_before_downloading(kana_dict, tmp_path,
+                                                  monkeypatch):
+    """Without onnxruntime the converter must not fetch the model first."""
+    import importlib.util
+    import g2pflow.converters.kashi as kashi
+
+    real_find = importlib.util.find_spec
+    monkeypatch.setattr(
+        importlib.util, "find_spec",
+        lambda name, *a, **k: None if name == "onnxruntime"
+        else real_find(name, *a, **k))
+    fetched = []
+    monkeypatch.setattr(kashi, "_install",
+                        lambda url, path, **kw: fetched.append(url))
+
+    converter = JapaneseKashiConverter(str(kana_dict),
+                                       cache_dir=str(tmp_path))
+    with pytest.raises(ImportError, match=r"g2pflow\[kashi\]"):
+        converter._get_runtime()
+    assert fetched == []
+
+
+def test_long_vowel_keeps_the_whole_word_pron(dictionary, tmp_path):
+    """A complete word keeps UniDic's pron; only split units merge first."""
+    model = tmp_path / "model.onnx"
+    lexicon = tmp_path / "lexicon.txz"
+    model.write_bytes(b"stub")
+    lexicon.write_bytes(b"stub")
+    converter = JapaneseKashiConverter(
+        str(dictionary("kyo\tk y o\n", "long.txt")), beam_size=16,
+        model_path=str(model), lexicon_path=str(lexicon))
+    converter._segmenter = _FakeSegmenter({"きょう": [(0, 3, "きょう", "キョー")]})
+    converter._runtime = _FakeRuntime({"きょう": [("きょう", ["きょう"])]})
+
+    words = converter.convert("きょう")
+    assert phones_candidates(words[0])[0] == ["kyo"]
+
+
+def test_iteration_mark_merges_before_choosing_the_reading(dictionary, tmp_path):
+    """The mark repeats the surface syllable, not a particle pron."""
+    model = tmp_path / "model.onnx"
+    lexicon = tmp_path / "lexicon.txz"
+    model.write_bytes(b"stub")
+    lexicon.write_bytes(b"stub")
+    converter = JapaneseKashiConverter(
+        str(dictionary("ha\th a\nwa\tw a\n", "iter.txt")), beam_size=1,
+        model_path=str(model), lexicon_path=str(lexicon))
+    converter._segmenter = _FakeSegmenter(
+        {"はゝ": [(0, 1, "は", "ワ"), (1, 2, "ゝ")]})
+    # Units are joined before the backend is asked, so it sees one word.
+    converter._runtime = _FakeRuntime({"はゝ": [("はゝ", ["はゝ"])]})
+
+    words = converter.convert("はゝ")
+    assert [word.text for word in words] == ["はゝ"]
+    assert phones(words[0]) == [["h", "a", "h", "a"]]
+    assert converter._runtime.calls == [("はゝ", 1, 1)]
+
+
+def test_compose_fallback_respects_beam_size(dictionary, tmp_path):
+    """The no-whole-word fallback must cap the composed cross-product."""
+    model = tmp_path / "model.onnx"
+    lexicon = tmp_path / "lexicon.txz"
+    model.write_bytes(b"stub")
+    lexicon.write_bytes(b"stub")
+    converter = JapaneseKashiConverter(
+        str(dictionary("a\ta\ni\ti\nu\tu\ne\te\no\to\n", "comp.txt")),
+        beam_size=2, model_path=str(model), lexicon_path=str(lexicon))
+    converter._segmenter = _FakeSegmenter({"あ": [(0, 1, "あ", "")]})
+    converter._runtime = _FakeRuntime({"あ": [("あ", ["あ"])]})
+
+    word = converter.convert_word("あ")
+    assert word is not None and len(word.readings) <= 2
+
+
+def phones_candidates(word):
+    return [["".join(group.phonemes) for group in reading.paths[0]]
+            for reading in word.readings if reading.paths]

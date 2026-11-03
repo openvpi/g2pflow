@@ -100,6 +100,7 @@ not select candidates against audio or encode phones into model vocabulary IDs.
 | `yue-jyutping` | Cantonese text through jyutping | Script-to-phone `dict_path` |
 | `japanese-kana` | Kana through romaji | Script-to-phone `dict_path` |
 | `japanese-mecab` | Japanese word segmentation and readings | Script-to-phone `dict_path`; optional `unidic_dir` |
+| `japanese-kashi` | kashi-g2p context-scored Japanese readings, fixed UniDic boundaries (ONNX beam N-best, auto-download) | Script-to-phone `dict_path`; optional `model_path` / `lexicon_path` / `cache_dir`, `beam_size`, `unidic_dir` |
 | `lstm` | Dictionary lookup and ONNX OOV inference | `model_path`; optional `dict_path` |
 
 Preprocessors: `filter-punctuation`, `strip-whitespace`, `lowercase`,

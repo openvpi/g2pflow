@@ -148,6 +148,37 @@ N-best candidates must cover the whole word as one node. Empty, placeholder and
 duplicate readings are discarded. Pure Kana without readings falls back to the
 Kana converter; unreadable non-Kana words raise `G2PConversionError`.
 
+## kashi-g2p (Japanese)
+
+Install `g2pflow[kashi]` for fugashi, UniDic, NumPy, ONNX Runtime and
+filelock. `japanese-kashi` accepts `dict_path`, `model_path=None`,
+`lexicon_path=None`, `cache_dir=None`, `prefer_dml=False`, `beam_size=16`
+and `unidic_dir=None`. Word boundaries are fixed by UniDic (fugashi); the
+kashi-g2p model only chooses readings inside those spans, and each word
+exposes beam-search N-best candidates in the same ``readings`` structure as
+`japanese-mecab`, converted into romaji scripts and phonemes from
+*dict_path*. `beam_size` caps the candidates per word; `beam_size=1`
+yields the best reading only — for a kana word that is the UniDic
+contextual reading, with the literal spelling dropped first.
+
+Like `japanese-mecab`, the converter claims Japanese-script runs only;
+latin, digits, punctuation and whitespace are routed to other converters
+by the pipeline, or raise `G2PConversionError` when no converter claims
+them.
+
+The ONNX model (~106 MB) and lexicon bundle (~11 MB) come from the
+kashi-g2p GitHub release. When `model_path` / `lexicon_path` are omitted
+or missing, they are downloaded once into `cache_dir` (default
+`~/.cache/g2pflow/kashi`, overridable with the `G2PFLOW_CACHE_DIR`
+environment variable) under a file lock. The UniDic dictionary for
+segmentation comes from the `unidic` package (downloaded on first use,
+mirroring `japanese-mecab`); pass `unidic_dir` to use an existing
+directory instead. Set `prefer_dml=True` on Windows machines with
+DirectML for GPU execution.
+
+The model weights are Apache-2.0; the lexicon bundle embeds
+JMdict/KANJIDIC2 (CC BY-SA 4.0) and UniDic (BSD) derived data.
+
 ## LSTM ONNX inference
 
 Install `g2pflow[lstm]` for NumPy and ONNX Runtime. The converter accepts `model_path`, `dict_path=None`,

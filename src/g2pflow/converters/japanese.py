@@ -336,3 +336,10 @@ class JapaneseMecabConverter(JapaneseReadingConverter):
 
     def _readings(self, text: str, segments: list[KanaSegment]) -> list[list[KanaReading]]:
         return [self._word_readings(segment.surface) for segment in segments]
+
+
+# The kashi backend lives in its own package but registers here, alongside
+# the other Japanese converters.
+from .kashi import JapaneseKashiConverter  # noqa: E402
+
+converter(id="japanese-kashi", language="ja,jpn")(JapaneseKashiConverter)
